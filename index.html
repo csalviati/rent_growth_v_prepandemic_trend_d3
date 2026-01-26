@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Rent Growth vs Pre-Pandemic Trend</title>
+
+  <!-- Proxima Nova: if you have a webfont license, load it here. Otherwise it will fall back gracefully. -->
+  <style>
+    :root{
+      --purple:#8434D6;
+      --text:#111;
+      --muted:#666;
+      --grid: rgba(0,0,0,0.12);
+      --bg:#fff;
+    }
+
+    body{
+      margin:0;
+      background:var(--bg);
+      font-family: "Proxima Nova", system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      color:var(--text);
+    }
+
+    .wrap{
+      width: 100%;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 12px 12px 8px 12px;
+      box-sizing: border-box;
+    }
+
+    .controls{
+      display:flex;
+      gap:12px;
+      align-items:center;
+      justify-content:space-between;
+      margin-bottom:10px;
+      flex-wrap:wrap;
+    }
+
+    label{
+      font-size:16px;
+      color:var(--muted);
+    }
+
+    select{
+      font-size:16px;
+      padding:6px 10px;
+      border:1px solid rgba(0,0,0,0.2);
+      border-radius:8px;
+      background:#fff;
+      min-width: 260px;
+    }
+
+    /* Chart container */
+    #chart{
+      position: relative;
+      width: 100%;
+    }
+
+    /* Tooltip */
+    .tooltip{
+      position:absolute;
+      pointer-events:none;
+      background: rgba(255,255,255,0.92);
+      border: 1px solid rgba(0,0,0,0.15);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 14px;
+      line-height: 1.25;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.12);
+      opacity: 0;
+      transform: translate(-50%, -100%);
+      white-space: nowrap;
+    }
+
+    .title{
+      text-align:center;
+      margin: 4px 0 10px 0;
+    }
+    .title .l1{
+      font-size:20px;
+      font-weight:600;
+      margin-bottom:2px;
+    }
+    .title .l2{
+      font-size:16px;
+      font-weight:400;
+      color:var(--text);
+    }
+
+    /* Footer (source + logo) */
+    .footer{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      margin-top:6px;
+      gap:12px;
+    }
+    .source{
+      font-size:14px;
+      color:var(--text);
+    }
+    .logo{
+      height:40px;
+      width:auto;
+      display:block;
+    }
+
+    /* Make SVG text crisp */
+    svg text{
+      font-family: inherit;
+    }
+  </style>
+
+  <!-- D3 -->
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+</head>
+
+<body>
+  <div class="wrap">
+    <div class="controls">
+      <div>
+        <label for="loc">Select geography</label><br/>
+        <select id="loc"></select>
+      </div>
+    </div>
+
+    <div class="title">
+      <div class="l1">United States Median Rent</div>
+      <div class="l2">Actual vs. Pre-Pandemic Trend: 2017-Present</div>
+    </div>
+
+    <div id="chart"></div>
+
+    <div class="footer">
+      <div class="source">Source: Apartment List</div>
+      <img class="logo" src="Apartment_List_Logo_RGB%20crop.png" alt="Apartment List logo" />
+    </div>
+  </div>
+
+<script>
+(async function() {
+  const PURPLE = "#8434D6";
+  const CSV_PATH = "final_df.csv";
+
+  // Y-axis rules (matching your static chart)
+  const yMin = 1000, yMax = 1500;
+  const yTicks = d3.range(1000, 1501, 100);
+
+  // Chart sizing
+  const height = 600;                 // SVG height (plot area + margins)
+  const margin = { top: 20, right: 16, bottom: 46, left: 64 };
+
+  // Internal plot height (axes included)
+  const innerH = height - margin.top - margin.bottom;
+
+  // Create tooltip
+  const container = d3.select("#chart");
+  const tooltip = container.append("div").attr("class", "tooltip");
+
+  // Parse/formatters
+  const parseDate = d3.timeParse("%Y-%m-%d");
+  const fmtMonth = d3.timeFormat("%b %Y");
+  const fmtDollar = d3.format("$,");
+  const fmtDollar0 = (v) => d3.format("$,.0f")(v);
+
+  // Load CSV
+  const raw = await d3.csv(CSV_PATH, d => ({
+    location_id: +d.location_id,
+    year: +d.year,
+    month: +d.month,
+    date: new Date(Date.UTC(+d.year, (+d.month - 1), 1)),
+    price_all_actual: d.price_all_actual === "" ? null : +d.price_all_actual,
+    price_all_prepan_trnd: d.price_all_prepan_trnd === "" ? null : +d.price_all_prepan_trnd
+  }));
+
+  // Build location list from the data (location_id 0 + others present)
+  const locationIds = Array.from(new Set(raw.map(d => d.location_id))).sort((a,b)=>a-b);
+
+  // Optional: if you later add a lookup CSV, you can replace labels here.
+  const labelFor = (id) => id === 0 ? "United States (National)" : `Metro ${id}`;
+
+  // Populate dropdown
+  const select = d3.select("#loc");
+  select.selectAll("option")
+    .data(locationIds)
+    .join("option")
+    .attr("value", d => d)
+    .text(d => labelFor(d));
+
+  select.property("value", 0);
+
+  // Create SVG (responsive width via viewBox + preserveAspectRatio)
+  const svg = container.append("svg")
+    .attr("role", "img")
+    .attr("aria-label", "Rent trend chart")
+    .attr("viewBox", `0 0 900 ${height}`)     // width will be scaled by CSS
+    .style("width", "100%")
+    .style("height", "auto");
+
+  // Measure actual pixel width of the rendered container and scale x accordingly
+  // We'll use a dynamic scale based on the viewBox width (900).
+  const viewW = 900;
+  const innerW = viewW - margin.left - margin.right;
+
+  const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+
+  // Scales (x domain will come from selected series)
+  const x = d3.scaleTime().range([0, innerW]);
+  const y = d3.scaleLinear().domain([yMin, yMax]).range([innerH, 0]);
+
+  // Gridlines (y only, at labeled ticks)
+  const grid = g.append("g").attr("class", "grid");
+  grid.selectAll("line")
+    .data(yTicks)
+    .join("line")
+    .attr("x1", 0).attr("x2", innerW)
+    .attr("y1", d => y(d)).attr("y2", d => y(d))
+    .attr("stroke", "rgba(0,0,0,0.10)")
+    .attr("shape-rendering", "crispEdges");
+
+  // Axes groups
+  const gx = g.append("g").attr("transform", `translate(0,${innerH})`);
+  const gy = g.append("g");
+
+  // Axis renderers
+  function renderAxes(xDomain){
+    x.domain(xDomain);
+
+    // yearly ticks
+    const years = d3.timeYears(
+      d3.timeYear.floor(xDomain[0]),
+      d3.timeYear.ceil(xDomain[1])
+    );
+
+    gx.call(d3.axisBottom(x)
+      .tickValues(years)
+      .tickFormat(d3.timeFormat("%Y"))
+      .tickSizeOuter(0)
+    );
+
+    // small hash marks: ensure visible ticks
+    gx.selectAll(".tick line")
+      .attr("y2", 6)
+      .attr("stroke", "#111");
+
+    gx.selectAll(".domain").attr("stroke", "rgba(0,0,0,0.25)");
+
+    gy.call(d3.axisLeft(y)
+      .tickValues(yTicks)
+      .tickFormat(fmtDollar0)
+      .tickSizeOuter(0)
+    );
+
+    gy.selectAll(".domain").remove();
+    gy.selectAll(".tick line").remove(); // no tick lines, just labels
+  }
+
+  // Line generators
+  const lineActual = d3.line()
+    .defined(d => d.price_all_actual != null)
+    .x(d => x(d.date))
+    .y(d => y(d.price_all_actual));
+
+  const lineTrend = d3.line()
+    .defined(d => d.price_all_prepan_trnd != null)
+    .x(d => x(d.date))
+    .y(d => y(d.price_all_prepan_trnd));
+
+  // Path elements
+  const pathActual = g.append("path")
+    .attr("fill", "none")
+    .attr("stroke", PURPLE)
+    .attr("stroke-width", 2);
+
+  const pathTrend = g.append("path")
+    .attr("fill", "none")
+    .attr("stroke", PURPLE)
+    .attr("stroke-width", 2)
+    .attr("stroke-dasharray", "8 6");
+
+  // Legend (upper-left, positioned between 1400 and 1500 gridlines)
+  const legendY = (y(1400) + y(1500)) / 2; // pixel midway
+  const legend = g.append("g")
+    .attr("transform", `translate(${12},${legendY - 30})`);
+
+  // Background
+  legend.append("rect")
+    .attr("x", -8).attr("y", -10)
+    .attr("width", 210).attr("height", 58)
+    .attr("rx", 8).attr("ry", 8)
+    .attr("fill", "rgba(255,255,255,0.75)")
+    .attr("stroke", "rgba(0,0,0,0.0)");
+
+  // Legend rows
+  const legRow1 = legend.append("g").attr("transform", "translate(0,0)");
+  const legRow2 = legend.append("g").attr("transform", "translate(0,26)");
+
+  // Actual sample
+  legRow1.append("line")
+    .attr("x1", 0).attr("x2", 54)
+    .attr("y1", 0).attr("y2", 0)
+    .attr("stroke", PURPLE)
+    .attr("stroke-width", 3);
+
+  legRow1.append("text")
+    .attr("x", 62).attr("y", 5)
+    .attr("font-size", 16)
+    .text("Actual");
+
+  // Trend sample (long enough to show multiple dashes)
+  legRow2.append("line")
+    .attr("x1", 0).attr("x2", 54)
+    .attr("y1", 0).attr("y2", 0)
+    .attr("stroke", PURPLE)
+    .attr("stroke-width", 3)
+    .attr("stroke-dasharray", "8 6");
+
+  legRow2.append("text")
+    .attr("x", 62).attr("y", 5)
+    .attr("font-size", 16)
+    .text("Pre-pandemic trend");
+
+  // Hover interaction: vertical rule + circles
+  const hover = g.append("g").style("display", "none");
+  hover.append("line")
+    .attr("class", "hover-line")
+    .attr("y1", 0).attr("y2", innerH)
+    .attr("stroke", "rgba(0,0,0,0.25)")
+    .attr("stroke-width", 1);
+
+  const dotA = hover.append("circle").attr("r", 4).attr("fill", PURPLE);
+  const dotT = hover.append("circle").attr("r", 4).attr("fill", PURPLE);
+
+  // Overlay for mouse events
+  const overlay = g.append("rect")
+    .attr("fill", "transparent")
+    .attr("width", innerW)
+    .attr("height", innerH);
+
+  // State
+  let current = raw.filter(d => d.location_id === 0).sort((a,b)=>a.date-b.date);
+
+  function update(locationId){
+    current = raw.filter(d => d.location_id === +locationId).sort((a,b)=>a.date-b.date);
+
+    const xDomain = d3.extent(current, d => d.date);
+    renderAxes(xDomain);
+
+    pathActual.attr("d", lineActual(current));
+    pathTrend.attr("d", lineTrend(current));
+
+    // Hide hover when switching
+    hover.style("display", "none");
+    tooltip.style("opacity", 0);
+  }
+
+  // Tooltip + hover handler
+  const bisect = d3.bisector(d => d.date).left;
+
+  overlay.on("mousemove", function(event){
+    const [mx] = d3.pointer(event, this);
+    const date = x.invert(mx);
+
+    const i = bisect(current, date, 1);
+    const a = current[i - 1];
+    const b = current[i];
+    if (!a || !b) return;
+
+    const d = (date - a.date) > (b.date - date) ? b : a;
+
+    const xPos = x(d.date);
+
+    // Compute y positions if available
+    const ya = d.price_all_actual != null ? y(d.price_all_actual) : null;
+    const yt = d.price_all_prepan_trnd != null ? y(d.price_all_prepan_trnd) : null;
+
+    hover.style("display", null);
+    hover.select(".hover-line")
+      .attr("x1", xPos).attr("x2", xPos);
+
+    if (ya != null){
+      dotA.attr("cx", xPos).attr("cy", ya).style("display", null);
+    } else {
+      dotA.style("display", "none");
+    }
+    if (yt != null){
+      dotT.attr("cx", xPos).attr("cy", yt).style("display", null);
+    } else {
+      dotT.style("display", "none");
+    }
+
+    // Tooltip content
+    const lines = [
+      `<div><b>${fmtMonth(d.date)}</b></div>`,
+      ya != null ? `<div>Actual: <b>${fmtDollar0(d.price_all_actual)}</b></div>` : "",
+      yt != null ? `<div>Pre-pandemic trend: <b>${fmtDollar0(d.price_all_prepan_trnd)}</b></div>` : ""
+    ].filter(Boolean).join("");
+
+    // Position tooltip in container coordinates
+    const bbox = container.node().getBoundingClientRect();
+    const svgBox = svg.node().getBoundingClientRect();
+    const left = (svgBox.left - bbox.left) + margin.left + xPos;
+    const top  = (svgBox.top - bbox.top) + margin.top + (Math.min(ya ?? innerH/2, yt ?? innerH/2));
+
+    tooltip
+      .html(lines)
+      .style("left", `${left}px`)
+      .style("top", `${top}px`)
+      .style("opacity", 1);
+  });
+
+  overlay.on("mouseleave", function(){
+    hover.style("display", "none");
+    tooltip.style("opacity", 0);
+  });
+
+  // Dropdown handler
+  select.on("change", (event) => update(event.target.value));
+
+  // Initial render
+  update(0);
+
+})();
+</script>
+</body>
+</html>
