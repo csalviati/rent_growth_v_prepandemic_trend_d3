@@ -1,0 +1,545 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Rent Gap Bubble Map</title>
+
+  <style>
+    .viz-root{
+      color-scheme: light;
+      --surface-1:      #fcfcfb;
+      --page-plane:     #f9f9f7;
+      --text-primary:   #0b0b0b;
+      --text-secondary: #52514e;
+      --text-muted:     #898781;
+      --gridline:       #e1e0d9;
+      --pos:            #67001f;
+      --neg:            #053061;
+      --mid:            #f7f7f7;
+      --border:         rgba(11,11,11,0.10);
+      --purple:         #8434D6;
+      --land:           #eeece6;
+      --state-line:     #d8d6cd;
+    }
+
+    body{
+      margin:0;
+      background:var(--page-plane);
+      font-family: "Proxima Nova", system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      color:var(--text-primary);
+    }
+
+    .wrap{
+      width: 100%;
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 16px 16px 12px 16px;
+      box-sizing: border-box;
+      background: var(--surface-1);
+    }
+
+    .title{ text-align:left; margin: 4px 0 0 0; }
+    .title .l1{ font-size:24px; font-weight:600; margin-bottom:2px; }
+    .title .l2{ font-size:18px; font-weight:400; color:var(--text-secondary); }
+
+    .controls{
+      display:flex;
+      align-items:flex-end;
+      gap:20px;
+      flex-wrap:wrap;
+      margin: 16px 0 14px 0;
+    }
+    .control-group{ display:flex; flex-direction:column; gap:4px; }
+    .control-group label{ font-size:14px; color:var(--text-secondary); font-weight:600; }
+    select{
+      font-size:16px; padding:6px 10px; border:1px solid rgba(0,0,0,0.2);
+      border-radius:8px; background:#fff; font-family:inherit; color:var(--text-primary);
+      min-width: 140px;
+    }
+    .segmented{ display:inline-flex; border:1px solid rgba(0,0,0,0.2); border-radius:8px; overflow:hidden; }
+    .segmented button{
+      font-family: inherit; font-size:15px; padding:6px 14px; border:none;
+      background:#fff; color: var(--text-secondary); cursor:pointer;
+    }
+    .segmented button + button{ border-left:1px solid rgba(0,0,0,0.15); }
+    .segmented button.active{ background: var(--purple); color:#fff; }
+
+    #chart{ position:relative; width:100%; }
+    #chart svg{ width:100%; height:auto; display:block; }
+
+    .state-shape{ stroke: var(--state-line); stroke-width: 1; }
+
+    .bubble{ stroke: var(--surface-1); stroke-width: 1; cursor: pointer; }
+
+    .legend-wrap{
+      display:flex; align-items:center; justify-content:space-between;
+      flex-wrap:wrap; gap:16px; margin-top:10px;
+    }
+    .color-legend{ display:flex; align-items:center; gap:8px; font-size:13px; color:var(--text-secondary); }
+    .color-legend .ramp{ width:160px; height:10px; border-radius:5px; }
+    .size-legend{ display:flex; align-items:center; gap:14px; font-size:13px; color:var(--text-secondary); }
+    .size-legend svg{ overflow: visible; }
+
+    .tooltip{
+      position:absolute;
+      pointer-events:none;
+      background: rgba(255,255,255,0.96);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 14px;
+      line-height: 1.3;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.15);
+      opacity: 0;
+      white-space: nowrap;
+      z-index: 40;
+    }
+
+    .note{ font-size:12px; color:var(--text-muted); margin-top:8px; }
+
+    .footer{
+      display:flex; align-items:center; justify-content:space-between;
+      margin-top:16px; gap:12px;
+    }
+    .source{ font-size:14px; color:var(--text-secondary); }
+    .logo{ height:36px; width:auto; display:block; }
+  </style>
+
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+  <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
+</head>
+
+<body>
+  <div class="wrap viz-root" id="vizRoot">
+    <div class="title">
+      <div class="l1" id="titleL1">Median Rent vs. Pre-Pandemic Trend</div>
+      <div class="l2" id="titleL2">Loading…</div>
+    </div>
+
+    <div class="controls">
+      <div class="control-group">
+        <label for="typeSelect">Location type</label>
+        <select id="typeSelect">
+          <option value="Metro" selected>Metro</option>
+          <option value="State">State</option>
+          <option value="City">City</option>
+        </select>
+      </div>
+      <div class="control-group">
+        <label>Compare to</label>
+        <div class="segmented" id="basisToggle">
+          <button data-basis="natl" class="active">National average trend</button>
+          <button data-basis="own">Market-specific trend</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="chart"></div>
+
+    <div class="legend-wrap">
+      <div class="color-legend">
+        <span>Below trend</span>
+        <span class="ramp" id="colorRamp"></span>
+        <span>Above trend</span>
+      </div>
+      <div class="size-legend" id="sizeLegend"></div>
+    </div>
+
+    <div class="note" id="note"></div>
+
+    <div class="footer">
+      <div class="source">Source: Apartment List</div>
+      <img class="logo" src="Apartment_List_Logo_RGB%20crop.png" alt="Apartment List logo" />
+    </div>
+  </div>
+
+<script>
+(async function() {
+  const CSV_PATH = "final_df.csv";
+  const num = (v) => (v === "" || v == null ? null : +v);
+  const fmtMonthYear = d3.timeFormat("%B %Y");
+  const fmtPct = d3.format("+.1%");
+
+  // ---- Approximate lat/lon lookups (WGS84) ----
+  // States: geographic centroid. Cities: keyed by exact "City, ST" location_name.
+  // Metros: keyed by exact CBSA location_name for the currently known set, with a
+  // parsing fallback (principal city + state) for any metro not explicitly listed
+  // below (e.g. after expanding the metro count upstream).
+  const STATE_COORDS = {
+    "Alabama":[32.81,-86.79],"Alaska":[61.37,-152.40],"Arizona":[33.73,-111.43],"Arkansas":[34.97,-92.37],
+    "California":[36.12,-119.68],"Colorado":[39.06,-105.31],"Connecticut":[41.60,-72.76],"Delaware":[39.32,-75.51],
+    "District of Columbia":[38.91,-77.02],"Florida":[27.77,-81.69],"Georgia":[33.04,-83.64],"Hawaii":[21.09,-157.50],
+    "Idaho":[44.24,-114.48],"Illinois":[40.35,-88.99],"Indiana":[39.85,-86.26],"Iowa":[42.01,-93.21],
+    "Kansas":[38.53,-96.73],"Kentucky":[37.67,-84.67],"Louisiana":[31.17,-91.87],"Maine":[44.69,-69.38],
+    "Maryland":[39.06,-76.80],"Massachusetts":[42.23,-71.53],"Michigan":[43.33,-84.54],"Minnesota":[45.69,-93.90],
+    "Mississippi":[32.74,-89.68],"Missouri":[38.46,-92.29],"Montana":[46.92,-110.45],"Nebraska":[41.13,-98.27],
+    "Nevada":[38.31,-117.05],"New Hampshire":[43.45,-71.56],"New Jersey":[40.30,-74.52],"New Mexico":[34.84,-106.25],
+    "New York":[42.17,-74.95],"North Carolina":[35.63,-79.81],"North Dakota":[47.53,-99.78],"Ohio":[40.39,-82.76],
+    "Oklahoma":[35.57,-96.93],"Oregon":[44.57,-122.07],"Pennsylvania":[40.59,-77.21],"Rhode Island":[41.68,-71.51],
+    "South Carolina":[33.86,-80.95],"South Dakota":[44.30,-99.44],"Tennessee":[35.75,-86.69],"Texas":[31.05,-97.56],
+    "Utah":[40.15,-111.86],"Vermont":[44.05,-72.71],"Virginia":[37.77,-78.17],"Washington":[47.40,-121.49],
+    "West Virginia":[38.49,-80.95],"Wisconsin":[44.27,-89.62],"Wyoming":[42.76,-107.30]
+  };
+
+  const CITY_COORDS = {
+    "Albuquerque, NM":[35.08,-106.65],"Anaheim, CA":[33.84,-117.91],"Arlington, TX":[32.70,-97.11],
+    "Arlington, VA":[38.88,-77.10],"Atlanta, GA":[33.75,-84.39],"Aurora, CO":[39.73,-104.83],
+    "Austin, TX":[30.27,-97.74],"Baltimore, MD":[39.29,-76.61],"Baton Rouge, LA":[30.45,-91.15],
+    "Boise, ID":[43.62,-116.20],"Boston, MA":[42.36,-71.06],"Chandler, AZ":[33.31,-111.84],
+    "Charlotte, NC":[35.23,-80.84],"Chesapeake, VA":[36.77,-76.29],"Chicago, IL":[41.88,-87.63],
+    "Chula Vista, CA":[32.64,-117.08],"Cincinnati, OH":[39.10,-84.51],"Cleveland, OH":[41.50,-81.69],
+    "Colorado Springs, CO":[38.83,-104.82],"Columbus, OH":[39.96,-83.00],"Corpus Christi, TX":[27.80,-97.40],
+    "Dallas, TX":[32.78,-96.80],"Denver, CO":[39.74,-104.99],"Des Moines, IA":[41.59,-93.62],
+    "Detroit, MI":[42.33,-83.05],"Durham, NC":[35.99,-78.90],"El Paso, TX":[31.76,-106.49],
+    "Fort Wayne, IN":[41.08,-85.14],"Fort Worth, TX":[32.75,-97.33],"Fremont, CA":[37.55,-121.99],
+    "Fresno, CA":[36.75,-119.77],"Garland, TX":[32.91,-96.64],"Gilbert, AZ":[33.35,-111.79],
+    "Glendale, AZ":[33.54,-112.19],"Greensboro, NC":[36.07,-79.79],"Henderson, NV":[36.04,-114.98],
+    "Houston, TX":[29.76,-95.37],"Huntsville, AL":[34.73,-86.59],"Indianapolis, IN":[39.77,-86.16],
+    "Irvine, CA":[33.68,-117.83],"Irving, TX":[32.81,-96.95],"Jacksonville, FL":[30.33,-81.66],
+    "Jersey City, NJ":[40.72,-74.08],"Kansas City, MO":[39.10,-94.58],"Las Vegas, NV":[36.17,-115.14],
+    "Lexington, KY":[38.04,-84.50],"Lincoln, NE":[40.81,-96.68],"Long Beach, CA":[33.77,-118.19],
+    "Los Angeles, CA":[34.05,-118.24],"Louisville, KY":[38.25,-85.76],"Madison, WI":[43.07,-89.40],
+    "Memphis, TN":[35.15,-90.05],"Mesa, AZ":[33.42,-111.83],"Miami, FL":[25.76,-80.19],
+    "Milwaukee, WI":[43.04,-87.91],"Minneapolis, MN":[44.98,-93.27],"Moreno Valley, CA":[33.94,-117.23],
+    "Nashville, TN":[36.16,-86.78],"New Orleans, LA":[29.95,-90.07],"New York City, NY":[40.71,-74.01],
+    "Newark, NJ":[40.74,-74.17],"Norfolk, VA":[36.85,-76.29],"North Las Vegas, NV":[36.20,-115.12],
+    "Oakland, CA":[37.80,-122.27],"Oklahoma City, OK":[35.47,-97.52],"Omaha, NE":[41.26,-95.94],
+    "Orlando, FL":[28.54,-81.38],"Philadelphia, PA":[39.95,-75.17],"Phoenix, AZ":[33.45,-112.07],
+    "Pittsburgh, PA":[40.44,-79.99],"Plano, TX":[33.02,-96.70],"Port St. Lucie, FL":[27.27,-80.36],
+    "Portland, OR":[45.52,-122.68],"Raleigh, NC":[35.78,-78.64],"Reno, NV":[39.53,-119.81],
+    "Richmond, VA":[37.54,-77.44],"Riverside, CA":[33.95,-117.40],"Sacramento, CA":[38.58,-121.49],
+    "San Antonio, TX":[29.42,-98.49],"San Diego, CA":[32.72,-117.16],"San Francisco, CA":[37.77,-122.42],
+    "San Jose, CA":[37.34,-121.89],"Santa Ana, CA":[33.75,-117.87],"Santa Clarita, CA":[34.39,-118.54],
+    "Scottsdale, AZ":[33.49,-111.93],"Seattle, WA":[47.61,-122.33],"Spokane, WA":[47.66,-117.43],
+    "Spring Valley, NV":[36.10,-115.25],"St. Louis, MO":[38.63,-90.20],"St. Paul, MN":[44.95,-93.09],
+    "St. Petersburg, FL":[27.77,-82.64],"Tacoma, WA":[47.25,-122.44],"Tampa, FL":[27.95,-82.46],
+    "Toledo, OH":[41.66,-83.56],"Tucson, AZ":[32.22,-110.93],"Tulsa, OK":[36.15,-95.99],
+    "Virginia Beach, VA":[36.85,-75.98],"Washington, DC":[38.91,-77.04],"Wichita, KS":[37.69,-97.34],
+    "Winston-Salem, NC":[36.10,-80.24]
+  };
+
+  const METRO_COORDS = {
+    "Atlanta-Sandy Springs-Alpharetta, GA":[33.75,-84.39],
+    "Austin-Round Rock-Georgetown, TX":[30.27,-97.74],
+    "Baltimore-Columbia-Towson, MD":[39.29,-76.61],
+    "Birmingham-Hoover, AL":[33.52,-86.80],
+    "Boston-Cambridge-Newton, MA-NH":[42.36,-71.06],
+    "Buffalo-Cheektowaga, NY":[42.89,-78.88],
+    "Charlotte-Concord-Gastonia, NC-SC":[35.23,-80.84],
+    "Chicago-Naperville-Elgin, IL-IN-WI":[41.88,-87.63],
+    "Cincinnati, OH-KY-IN":[39.10,-84.51],
+    "Cleveland-Elyria, OH":[41.50,-81.69],
+    "Columbus, OH":[39.96,-83.00],
+    "Dallas-Fort Worth-Arlington, TX":[32.78,-96.80],
+    "Denver-Aurora-Lakewood, CO":[39.74,-104.99],
+    "Detroit-Warren-Dearborn, MI":[42.33,-83.05],
+    "Hartford-East Hartford-Middletown, CT":[41.76,-72.69],
+    "Houston-The Woodlands-Sugar Land, TX":[29.76,-95.37],
+    "Indianapolis-Carmel-Anderson, IN":[39.77,-86.16],
+    "Jacksonville, FL":[30.33,-81.66],
+    "Kansas City, MO-KS":[39.10,-94.58],
+    "Las Vegas-Henderson-Paradise, NV":[36.17,-115.14],
+    "Los Angeles-Long Beach-Anaheim, CA":[34.05,-118.24],
+    "Louisville/Jefferson County, KY-IN":[38.25,-85.76],
+    "Memphis, TN-MS-AR":[35.15,-90.05],
+    "Miami-Fort Lauderdale-Pompano Beach, FL":[25.76,-80.19],
+    "Milwaukee-Waukesha, WI":[43.04,-87.91],
+    "Minneapolis-St. Paul-Bloomington, MN-WI":[44.98,-93.27],
+    "Nashville-Davidson--Murfreesboro--Franklin, TN":[36.16,-86.78],
+    "New Orleans-Metairie, LA":[29.95,-90.07],
+    "New York-Newark-Jersey City, NY-NJ-PA":[40.71,-74.01],
+    "Oklahoma City, OK":[35.47,-97.52],
+    "Orlando-Kissimmee-Sanford, FL":[28.54,-81.38],
+    "Philadelphia-Camden-Wilmington, PA-NJ-DE-MD":[39.95,-75.17],
+    "Phoenix-Mesa-Chandler, AZ":[33.45,-112.07],
+    "Pittsburgh, PA":[40.44,-79.99],
+    "Portland-Vancouver-Hillsboro, OR-WA":[45.52,-122.68],
+    "Providence-Warwick, RI-MA":[41.82,-71.41],
+    "Raleigh-Cary, NC":[35.78,-78.64],
+    "Richmond, VA":[37.54,-77.44],
+    "Riverside-San Bernardino-Ontario, CA":[33.95,-117.40],
+    "Sacramento-Roseville-Folsom, CA":[38.58,-121.49],
+    "Salt Lake City, UT":[40.76,-111.89],
+    "San Antonio-New Braunfels, TX":[29.42,-98.49],
+    "San Diego-Chula Vista-Carlsbad, CA":[32.72,-117.16],
+    "San Francisco-Oakland-Berkeley, CA":[37.77,-122.42],
+    "San Jose-Sunnyvale-Santa Clara, CA":[37.34,-121.89],
+    "Seattle-Tacoma-Bellevue, WA":[47.61,-122.33],
+    "St. Louis, MO-IL":[38.63,-90.20],
+    "Tampa-St. Petersburg-Clearwater, FL":[27.95,-82.46],
+    "Virginia Beach-Norfolk-Newport News, VA-NC":[36.85,-75.98],
+    "Washington-Arlington-Alexandria, DC-VA-MD-WV":[38.91,-77.04]
+  };
+
+  // Fallback: guess a coordinate for a metro name not in the explicit table
+  // above, by parsing out its principal city + first state code and looking
+  // that up in CITY_COORDS (covers most future/expanded metro lists).
+  function guessMetroCoord(name){
+    const commaIdx = name.indexOf(",");
+    if (commaIdx < 0) return null;
+    const cityPart = name.slice(0, commaIdx);
+    const statePart = name.slice(commaIdx + 1).trim();
+    const firstState = statePart.split("-")[0].trim();
+    const cityCandidates = cityPart.split("/")[0].split("-");
+    for (const cand of cityCandidates){
+      const key = `${cand.trim()}, ${firstState}`;
+      if (CITY_COORDS[key]) return CITY_COORDS[key];
+    }
+    return null;
+  }
+
+  // us-atlas topology ids are 2-digit Census state FIPS codes. Some builds of
+  // us-atlas omit a "name" property on each feature, so resolve the name from
+  // the id first (reliable) and only fall back to properties.name.
+  const FIPS_TO_STATE = {
+    "01":"Alabama","02":"Alaska","04":"Arizona","05":"Arkansas","06":"California","08":"Colorado",
+    "09":"Connecticut","10":"Delaware","11":"District of Columbia","12":"Florida","13":"Georgia",
+    "15":"Hawaii","16":"Idaho","17":"Illinois","18":"Indiana","19":"Iowa","20":"Kansas","21":"Kentucky",
+    "22":"Louisiana","23":"Maine","24":"Maryland","25":"Massachusetts","26":"Michigan","27":"Minnesota",
+    "28":"Mississippi","29":"Missouri","30":"Montana","31":"Nebraska","32":"Nevada","33":"New Hampshire",
+    "34":"New Jersey","35":"New Mexico","36":"New York","37":"North Carolina","38":"North Dakota","39":"Ohio",
+    "40":"Oklahoma","41":"Oregon","42":"Pennsylvania","44":"Rhode Island","45":"South Carolina",
+    "46":"South Dakota","47":"Tennessee","48":"Texas","49":"Utah","50":"Vermont","51":"Virginia",
+    "53":"Washington","54":"West Virginia","55":"Wisconsin","56":"Wyoming","72":"Puerto Rico"
+  };
+  function stateNameForFeature(feature){
+    const id = String(feature.id ?? "").padStart(2, "0");
+    return FIPS_TO_STATE[id] || feature.properties?.name || null;
+  }
+
+  function coordFor(type, name){
+    if (type === "State") return STATE_COORDS[name] || null;
+    if (type === "City") return CITY_COORDS[name] || null;
+    if (type === "Metro") return METRO_COORDS[name] || guessMetroCoord(name);
+    return null;
+  }
+
+  // ---- Load data ----
+  const raw = await d3.csv(CSV_PATH, d => ({
+    location_id: +d.location_id,
+    location_type: d.location_type,
+    location_name: d.location_name,
+    population: num(d.population),
+    date: new Date(+d.year, (+d.month - 1), 1),
+    price_all_actual: num(d.price_all_actual),
+    price_all_prepan_trnd: num(d.price_all_prepan_trnd),
+    price_all_prepan_trnd_natl: num(d.price_all_prepan_trnd_natl)
+  }));
+
+  const latestDate = d3.max(raw, d => d.date);
+  const latestLabel = fmtMonthYear(latestDate);
+  const latestRows = raw.filter(d => d.date.getTime() === latestDate.getTime());
+
+  const byLocation = latestRows
+    .filter(d => d.location_type !== "National")
+    .map(d => {
+      const diffOwn = (d.price_all_actual != null && d.price_all_prepan_trnd)
+        ? d.price_all_actual / d.price_all_prepan_trnd - 1 : null;
+      const diffNatl = (d.price_all_actual != null && d.price_all_prepan_trnd_natl)
+        ? d.price_all_actual / d.price_all_prepan_trnd_natl - 1 : null;
+      const coord = coordFor(d.location_type, d.location_name);
+      return {
+        location_id: d.location_id,
+        location_type: d.location_type,
+        location_name: d.location_name,
+        population: d.population,
+        diffOwn, diffNatl, coord
+      };
+    });
+
+  let currentType = "Metro";
+  let currentBasis = "natl";
+
+  const container = d3.select("#chart");
+  const tooltip = container.append("div").attr("class", "tooltip");
+
+  const width = 900, height = 560;
+  const svg = container.append("svg").attr("viewBox", `0 0 ${width} ${height}`);
+  const gMap = svg.append("g");
+  const gBubbles = svg.append("g");
+
+  const projection = d3.geoAlbersUsa().scale(1050).translate([width / 2, height / 2]);
+  const path = d3.geoPath(projection);
+
+  // Basemap: US state outlines (also doubles as the choropleth layer when
+  // "State" is the selected location type)
+  const us = await d3.json("https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json");
+  const statesGeo = topojson.feature(us, us.objects.states);
+  const stateShapes = gMap.selectAll("path.state-shape")
+    .data(statesGeo.features)
+    .join("path")
+    .attr("class", "state-shape")
+    .attr("d", path);
+
+  // ColorBrewer 11-class RdBu diverging scheme (colorbrewer2.org), blue pole
+  // first (below trend) through red pole last (above trend) -- more steps than
+  // the 7-class version, for finer-grained shade variation across the map.
+  const RDBU_11 = [
+    "#053061", "#2166ac", "#4393c3", "#92c5de", "#d1e5f0", "#f7f7f7",
+    "#fddbc7", "#f4a582", "#d6604d", "#b2182b", "#67001f"
+  ];
+
+  const colorScale = d3.scaleDiverging()
+    .interpolator(t => d3.interpolateRgbBasis(RDBU_11)(t))
+    .clamp(true);
+
+  document.getElementById("colorRamp").style.background =
+    `linear-gradient(to right, ${RDBU_11.join(", ")})`;
+
+  const radiusScale = d3.scaleSqrt().range([4, 26]);
+
+  function positionTooltip(event){
+    const bbox = container.node().getBoundingClientRect();
+    const ttRect = tooltip.node().getBoundingClientRect();
+    let left = event.clientX - bbox.left + 14;
+    let top = event.clientY - bbox.top + 14;
+    left = Math.max(4, Math.min(left, bbox.width - ttRect.width - 4));
+    tooltip.style("left", `${left}px`).style("top", `${top}px`);
+  }
+
+  function render(){
+    const basisKey = currentBasis === "natl" ? "diffNatl" : "diffOwn";
+    const data = byLocation
+      .filter(d => d.location_type === currentType && d[basisKey] != null && d.coord)
+      .map(d => ({ ...d, value: d[basisKey] }));
+
+    const excluded = byLocation.filter(d => d.location_type === currentType && d[basisKey] != null && !d.coord).length;
+
+    document.getElementById("titleL1").textContent =
+      `Median Rent vs. Pre-Pandemic Trend: ${currentType}s`;
+    document.getElementById("titleL2").textContent =
+      `Percentage gap between actual and pre-pandemic trend, ${latestLabel}`;
+
+    // Use the 90th percentile of |value| (instead of the true max) as the color
+    // domain's edge, so a handful of extreme outliers don't wash out the shades
+    // used by everything else -- outliers beyond it just clamp to full color.
+    const absVals = data.map(d => Math.abs(d.value)).sort(d3.ascending);
+    const domainMax = (absVals.length ? d3.quantile(absVals, 0.9) : null) || d3.max(absVals) || 0.01;
+    colorScale.domain([-domainMax, 0, domainMax]);
+
+    const isState = currentType === "State";
+    const sizeLegend = d3.select("#sizeLegend");
+
+    if (isState){
+      // Choropleth: shade the state shape itself; no bubbles.
+      gBubbles.selectAll("circle.bubble").remove();
+
+      const byName = new Map(data.map(d => [d.location_name, d]));
+
+
+      stateShapes
+        .style("fill", d => {
+          const name = stateNameForFeature(d);
+          const match = name ? byName.get(name) : null;
+          return match ? colorScale(match.value) : "var(--land)";
+        })
+        .style("cursor", d => {
+          const name = stateNameForFeature(d);
+          return name && byName.has(name) ? "pointer" : "default";
+        })
+        .on("mouseenter", function(event, d){
+          const name = stateNameForFeature(d);
+          const match = name ? byName.get(name) : null;
+          if (!match) return;
+          d3.select(this).attr("stroke-width", 2);
+          tooltip.html(
+            `<div><b>${match.location_name}</b></div>` +
+            `<div>Actual vs. ${currentBasis === "natl" ? "national average" : "market-specific"} trend: <b>${fmtPct(match.value)}</b></div>`
+          );
+          positionTooltip(event);
+          tooltip.style("opacity", 1);
+        })
+        .on("mousemove", function(event, d){
+          const name = stateNameForFeature(d);
+          if (name && byName.has(name)) positionTooltip(event);
+        })
+        .on("mouseleave", function(){
+          d3.select(this).attr("stroke-width", 1);
+          tooltip.style("opacity", 0);
+        });
+
+      sizeLegend.selectAll("*").remove();
+      sizeLegend.style("display", "none");
+    } else {
+      // Bubbles: reset the basemap to its plain, non-interactive state.
+      stateShapes
+        .style("fill", "var(--land)")
+        .style("cursor", "default")
+        .on("mouseenter", null)
+        .on("mousemove", null)
+        .on("mouseleave", null);
+
+      const pops = data.map(d => d.population || 0);
+      radiusScale.domain([0, d3.max(pops) || 1]);
+
+      const bubbles = gBubbles.selectAll("circle.bubble").data(data, d => d.location_id);
+      bubbles.exit().remove();
+      const bubblesEnter = bubbles.enter().append("circle").attr("class", "bubble");
+      bubblesEnter.merge(bubbles)
+        .attr("cx", d => projection(d.coord.slice().reverse())[0])
+        .attr("cy", d => projection(d.coord.slice().reverse())[1])
+        .attr("r", d => radiusScale(d.population || 0))
+        .attr("fill", d => colorScale(d.value))
+        .attr("fill-opacity", 0.85)
+        .on("mouseenter", function(event, d){
+          d3.select(this).attr("stroke-width", 2);
+          tooltip.html(
+            `<div><b>${d.location_name}</b></div>` +
+            (d.population ? `<div>Population: ${d3.format(",")(Math.round(d.population))}</div>` : "") +
+            `<div>Actual vs. ${currentBasis === "natl" ? "national average" : "market-specific"} trend: <b>${fmtPct(d.value)}</b></div>`
+          );
+          positionTooltip(event);
+          tooltip.style("opacity", 1);
+        })
+        .on("mousemove", positionTooltip)
+        .on("mouseleave", function(){
+          d3.select(this).attr("stroke-width", 1);
+          tooltip.style("opacity", 0);
+        });
+
+      // Size legend (representative population values)
+      sizeLegend.style("display", null);
+      sizeLegend.selectAll("*").remove();
+      const legendVals = [pops.length ? d3.max(pops) : 1e6, (d3.max(pops) || 1e6) / 4].filter(v => v > 0);
+      const legendW = 140, legendH = 60;
+      const lsvg = sizeLegend.append("svg").attr("width", legendW).attr("height", legendH);
+      const baseY = legendH - 6;
+      legendVals.forEach((v, i) => {
+        const r = radiusScale(v);
+        const cx = 20 + i * 60;
+        lsvg.append("circle")
+          .attr("cx", cx).attr("cy", baseY - r).attr("r", r)
+          .attr("fill", "none").attr("stroke", "var(--text-muted)");
+        lsvg.append("text")
+          .attr("x", cx).attr("y", legendH - 2)
+          .attr("text-anchor", "middle").attr("font-size", 11).attr("fill", "var(--text-secondary)")
+          .text(d3.format(".2s")(v).replace("G", "B"));
+      });
+      sizeLegend.insert("span", "svg").text("Population:");
+    }
+
+    document.getElementById("note").textContent = excluded
+      ? `${excluded} ${currentType.toLowerCase()}${excluded === 1 ? "" : "s"} could not be plotted (${isState ? "no matching state shape" : "coordinates unavailable"}).`
+      : "";
+  }
+
+  document.getElementById("typeSelect").addEventListener("change", (e) => {
+    currentType = e.target.value;
+    render();
+  });
+
+  document.querySelectorAll("#basisToggle button").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("#basisToggle button").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      currentBasis = btn.dataset.basis;
+      render();
+    });
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>

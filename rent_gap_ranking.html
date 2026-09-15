@@ -62,7 +62,7 @@
       background:#fff;
       font-family: inherit;
       color: var(--text-primary);
-      min-width: 160px;
+      min-width: 140px;
     }
     .segmented{
       display:inline-flex;
@@ -101,7 +101,17 @@
       vertical-align:middle;
     }
 
-    #chart{ position:relative; width:100%; }
+    /* Fixed-height, independently scrollable chart area */
+    #chartScroll{
+      position:relative;
+      width:100%;
+      max-height: 620px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      border: 1px solid var(--gridline);
+      border-radius: 8px;
+    }
+    #chart{ position:relative; width:100%; display:block; }
 
     .row-label{
       font-size:14px;
@@ -146,12 +156,6 @@
     }
     .source{ font-size:14px; color:var(--text-secondary); }
     .logo{ height:36px; width:auto; display:block; }
-
-    .note{
-      font-size:13px;
-      color: var(--text-muted);
-      margin: 10px 0 0 0;
-    }
   </style>
 
   <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
@@ -160,7 +164,7 @@
 <body>
   <div class="wrap viz-root" id="vizRoot">
     <div class="title">
-      <div class="l1" id="titleL1">Where Rents Sit Above or Below the Pre-Pandemic Trend</div>
+      <div class="l1" id="titleL1">Median Rent vs. Pre-Pandemic Trend</div>
       <div class="l2" id="titleL2">Loading…</div>
     </div>
 
@@ -168,16 +172,24 @@
       <div class="control-group">
         <label for="typeSelect">Location type</label>
         <select id="typeSelect">
-          <option value="Metro" selected>Metro (50 largest)</option>
+          <option value="Metro" selected>Metro</option>
           <option value="State">State</option>
-          <option value="City">City (100 largest)</option>
+          <option value="City">City</option>
         </select>
       </div>
       <div class="control-group">
         <label>Compare to</label>
         <div class="segmented" id="basisToggle">
-          <button data-basis="natl" class="active">National average extrapolation</button>
-          <button data-basis="own">Market-specific extrapolation</button>
+          <button data-basis="natl" class="active">National average trend</button>
+          <button data-basis="own">Market-specific trend</button>
+        </div>
+      </div>
+      <div class="control-group">
+        <label>Show</label>
+        <div class="segmented" id="showToggle">
+          <button data-n="25" class="active">25 largest</button>
+          <button data-n="50">50 largest</button>
+          <button data-n="100">100 largest</button>
         </div>
       </div>
     </div>
@@ -187,9 +199,9 @@
       <span><span class="swatch" style="background:var(--neg)"></span>Actual below trend</span>
     </div>
 
-    <div id="chart"></div>
-
-    <div class="note" id="note"></div>
+    <div id="chartScroll">
+      <div id="chart"></div>
+    </div>
 
     <div class="footer">
       <div class="source">Source: Apartment List</div>
@@ -203,25 +215,24 @@
   const num = (v) => (v === "" || v == null ? null : +v);
   const fmtMonthYear = d3.timeFormat("%B %Y");
   const fmtPct = d3.format("+.1%");
+  const TYPE_PLURAL = { Metro: "Metros", State: "States", City: "Cities" };
 
   const raw = await d3.csv(CSV_PATH, d => ({
     location_id: +d.location_id,
     location_type: d.location_type,
     location_name: d.location_name,
+    population: num(d.population),
     date: new Date(+d.year, (+d.month - 1), 1),
     price_all_actual: num(d.price_all_actual),
     price_all_prepan_trnd: num(d.price_all_prepan_trnd),
     price_all_prepan_trnd_natl: num(d.price_all_prepan_trnd_natl)
   }));
 
-  // Identify the most current month dynamically
   const latestDate = d3.max(raw, d => d.date);
-  document.getElementById("titleL2").textContent =
-    `% difference from pre-pandemic trend, ${fmtMonthYear(latestDate)}`;
+  const latestLabel = fmtMonthYear(latestDate);
 
   const latestRows = raw.filter(d => d.date.getTime() === latestDate.getTime());
 
-  // One row per location for the latest month, with both comparison ratios computed
   const byLocation = latestRows
     .filter(d => d.location_type !== "National")
     .map(d => {
@@ -233,20 +244,21 @@
         location_id: d.location_id,
         location_type: d.location_type,
         location_name: d.location_name,
+        population: d.population,
         diffOwn, diffNatl
       };
     });
 
-  // ---- State ----
   let currentType = "Metro";
   let currentBasis = "natl"; // "natl" | "own"
+  let currentShowN = 25;
 
   const container = d3.select("#chart");
-  const tooltip = container.append("div").attr("class", "tooltip");
+  const tooltip = d3.select("#chartScroll").append("div").attr("class", "tooltip");
 
   const margin = { top: 8, right: 70, bottom: 34, left: 230 };
-  const rowH = 22;      // <=24px bar band, per spec
-  const barThick = 16;  // actual bar thickness within the row
+  const rowH = 22;
+  const barThick = 16;
   const viewW = 860;
   const innerW = viewW - margin.left - margin.right;
 
@@ -254,7 +266,7 @@
     .attr("role", "img")
     .attr("aria-label", "Ranked bar chart of rent gap vs. pre-pandemic trend")
     .style("width", "100%")
-    .style("height", "auto");
+    .style("display", "block");
 
   const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
   const gGrid = g.append("g").attr("class", "gridlines");
@@ -270,15 +282,11 @@
     const rr = Math.min(r, Math.abs(xVal - xZero) / 2 || r, (yBot - yTop) / 2);
     if (positive){
       const x0 = xZero, x1 = xVal;
-      if (x1 - x0 < rr * 2) {
-        return `M${x0},${yTop} L${x1},${yTop} L${x1},${yBot} L${x0},${yBot} Z`;
-      }
+      if (x1 - x0 < rr * 2) return `M${x0},${yTop} L${x1},${yTop} L${x1},${yBot} L${x0},${yBot} Z`;
       return `M${x0},${yTop} L${x1 - rr},${yTop} Q${x1},${yTop} ${x1},${yTop + rr} L${x1},${yBot - rr} Q${x1},${yBot} ${x1 - rr},${yBot} L${x0},${yBot} Z`;
     } else {
       const x0 = xZero, x1 = xVal;
-      if (x0 - x1 < rr * 2) {
-        return `M${x0},${yTop} L${x1},${yTop} L${x1},${yBot} L${x0},${yBot} Z`;
-      }
+      if (x0 - x1 < rr * 2) return `M${x0},${yTop} L${x1},${yTop} L${x1},${yBot} L${x0},${yBot} Z`;
       return `M${x0},${yTop} L${x1 + rr},${yTop} Q${x1},${yTop} ${x1},${yTop + rr} L${x1},${yBot - rr} Q${x1},${yBot} ${x1 + rr},${yBot} L${x0},${yBot} Z`;
     }
   }
@@ -292,14 +300,28 @@
     const basisKey = currentBasis === "natl" ? "diffNatl" : "diffOwn";
     let data = byLocation
       .filter(d => d.location_type === currentType && d[basisKey] != null)
-      .map(d => ({ ...d, value: d[basisKey] }))
-      .sort((a, b) => b.value - a.value);
+      .map(d => ({ ...d, value: d[basisKey] }));
+
+    // "Show N largest": cap to the N largest-by-population locations of this
+    // type (falls back to showing everything if population isn't available).
+    const hasPopulation = data.some(d => d.population != null);
+    if (hasPopulation){
+      data = data.slice().sort((a, b) => (b.population ?? 0) - (a.population ?? 0)).slice(0, currentShowN);
+    }
+
+    // Final display order: biggest-above-trend to biggest-below-trend
+    data.sort((a, b) => b.value - a.value);
 
     const n = data.length;
-    const innerH = n * rowH;
-    const totalH = innerH + margin.top + margin.bottom;
+    const innerH = Math.max(n, 1) * rowH;
+    const contentH = innerH + margin.top + margin.bottom;
 
-    svg.attr("viewBox", `0 0 ${viewW} ${totalH}`);
+    svg.attr("viewBox", `0 0 ${viewW} ${contentH}`).attr("height", contentH);
+
+    document.getElementById("titleL2").textContent =
+      `Percentage gap between actual and pre-pandemic trend, ${latestLabel}`;
+    document.getElementById("titleL1").textContent =
+      `Median Rent vs. Pre-Pandemic Trend: ${n} Largest ${TYPE_PLURAL[currentType] || currentType}`;
 
     const maxAbs = d3.max(data, d => Math.abs(d.value)) || 0.01;
     x.domain([-maxAbs * 1.12, maxAbs * 1.12]).range([0, innerW]).nice();
@@ -324,7 +346,6 @@
 
     const maxLabelChars = Math.max(8, Math.floor((margin.left - 16) / 7.2));
 
-    // Row hover backgrounds
     const rowBg = gBars.selectAll("rect.bar-row-bg").data(data, d => d.location_id);
     rowBg.exit().remove();
     const rowBgEnter = rowBg.enter().append("rect").attr("class", "bar-row-bg");
@@ -349,15 +370,15 @@
       });
 
     function positionTooltip(event){
-      const bbox = container.node().getBoundingClientRect();
-      const left = event.clientX - bbox.left + 14;
-      const top = event.clientY - bbox.top + 14;
+      const scrollEl = document.getElementById("chartScroll");
+      const bbox = scrollEl.getBoundingClientRect();
+      const left = event.clientX - bbox.left + scrollEl.scrollLeft + 14;
+      const top = event.clientY - bbox.top + scrollEl.scrollTop + 14;
       const ttRect = tooltip.node().getBoundingClientRect();
-      const clampedLeft = Math.max(4, Math.min(left, bbox.width - ttRect.width - 4));
+      const clampedLeft = Math.max(4, Math.min(left, scrollEl.scrollWidth - ttRect.width - 4));
       tooltip.style("left", `${clampedLeft}px`).style("top", `${top}px`);
     }
 
-    // Bars
     const bars = gBars.selectAll("path.bar").data(data, d => d.location_id);
     bars.exit().remove();
     const barsEnter = bars.enter().append("path").attr("class", "bar");
@@ -369,7 +390,6 @@
       })
       .attr("fill", d => d.value >= 0 ? "var(--pos)" : "var(--neg)");
 
-    // Row (location name) labels, left of the zero baseline in the margin
     const rowLabels = gLabels.selectAll("text.row-label").data(data, d => d.location_id);
     rowLabels.exit().remove();
     const rowLabelsEnter = rowLabels.enter().append("text").attr("class", "row-label");
@@ -382,7 +402,6 @@
       .append("title");
     gLabels.selectAll("text.row-label").select("title").text(d => d.location_name);
 
-    // Value labels at the tip of each bar
     const valueLabels = gLabels.selectAll("text.value-label").data(data, d => d.location_id);
     valueLabels.exit().remove();
     const valueLabelsEnter = valueLabels.enter().append("text").attr("class", "value-label");
@@ -392,10 +411,6 @@
       .attr("x", d => x(d.value) + (d.value >= 0 ? 6 : -6))
       .attr("text-anchor", d => d.value >= 0 ? "start" : "end")
       .text(d => fmtPct(d.value));
-
-    document.getElementById("note").textContent =
-      `Showing ${n} ${currentType === "Metro" ? "metros" : currentType === "City" ? "cities" : "states"}` +
-      (currentType !== "State" ? " (largest by population, with full 2017–present coverage)." : ".");
   }
 
   document.getElementById("typeSelect").addEventListener("change", (e) => {
@@ -408,6 +423,15 @@
       document.querySelectorAll("#basisToggle button").forEach(b => b.classList.remove("active"));
       btn.classList.add("active");
       currentBasis = btn.dataset.basis;
+      render();
+    });
+  });
+
+  document.querySelectorAll("#showToggle button").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("#showToggle button").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      currentShowN = +btn.dataset.n;
       render();
     });
   });

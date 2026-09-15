@@ -97,11 +97,11 @@ select_top_n_locations <- function(df, type, n = Inf) {
     pull(location_id)
 }
 
-top_50_metros <- select_top_n_locations(df_locs, "Metro", 50)
+top_100_metros <- select_top_n_locations(df_locs, "Metro", 100)
 top_100_cities <- select_top_n_locations(df_locs, "City", 100)
 all_states     <- select_top_n_locations(df_locs, "State")   # no cap: keep every state
 
-locations_keep <- c(0, top_50_metros, all_states, top_100_cities)
+locations_keep <- c(0, top_100_metros, all_states, top_100_cities)
 
 df_keep <- df_locs %>%
   filter(location_id %in% locations_keep) %>%
@@ -109,6 +109,15 @@ df_keep <- df_locs %>%
     location_id, location_type, location_name, year, month, date,
     population, price_all, moving_avg_price_index
   )
+
+# Carry a single population figure per location forward (most recent non-missing
+# observation), for use in downstream visualizations (e.g. bubble-map sizing).
+pop_lookup <- df_keep %>%
+  filter(!is.na(population)) %>%
+  group_by(location_id) %>%
+  slice_max(date, n = 1) %>%
+  ungroup() %>%
+  select(location_id, population_latest = population)
 
 # Quick check: should be 1 (national) + up to 50 metros + all states + up to 100 cities
 temp <- df_keep %>%
@@ -241,8 +250,11 @@ final_df <- df_mom %>%
     )
   ) %>%
   ungroup() %>%
+  select(-population) %>%   # drop the monthly value; replaced by pop_lookup's single latest figure
+  left_join(pop_lookup, by = "location_id") %>%
+  rename(population = population_latest) %>%
   select(
-    location_id, location_type, location_name, year, month,
+    location_id, location_type, location_name, population, year, month,
     price_all_actual, mom_chg_actual,
     price_all_prepan_trnd, mom_chg_prepan_trnd,
     price_all_prepan_trnd_natl, mom_chg_prepan_trnd_natl
