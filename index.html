@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Rent Growth vs Pre-Pandemic Trend</title>
 
-  <!-- Proxima Nova: if you have a webfont license, load it here. Otherwise it will fall back gracefully. -->
   <style>
     :root{
       --purple:#8434D6;
@@ -30,27 +29,69 @@
       box-sizing: border-box;
     }
 
-    .controls{
-      display:flex;
-      gap:12px;
-      align-items:center;
-      justify-content:flex-start;
-      margin: 8px 0 10px 0;
-      flex-wrap:wrap;
-    }
-
     label{
       font-size:18px;
       color:var(--muted);
     }
 
-    select{
+    /* Searchable geography combobox */
+    .controls{
+      display:flex;
+      align-items:center;
+      justify-content:flex-start;
+      gap:12px;
+      margin: 10px 0 12px 0;
+      flex-wrap:wrap;
+    }
+    .combo{
+      position:relative;
+      width: 320px;
+      max-width: 100%;
+    }
+    .combo input{
+      width:100%;
+      box-sizing:border-box;
       font-size:18px;
       padding:6px 10px;
       border:1px solid rgba(0,0,0,0.2);
       border-radius:8px;
       background:#fff;
-      min-width: 260px;
+      font-family: inherit;
+      color: var(--text);
+    }
+    .combo input:focus{
+      outline: 2px solid rgba(132,52,214,0.35);
+      border-color: var(--purple);
+    }
+    .combo-list{
+      display:none;
+      position:absolute;
+      top: calc(100% + 4px);
+      left:0;
+      right:0;
+      max-height: 280px;
+      overflow-y:auto;
+      background:#fff;
+      border:1px solid rgba(0,0,0,0.2);
+      border-radius:8px;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.15);
+      z-index: 30;
+    }
+    .combo-option{
+      padding:8px 10px;
+      font-size:16px;
+      cursor:pointer;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .combo-option.active{
+      background: rgba(132,52,214,0.12);
+    }
+    .combo-empty{
+      padding:8px 10px;
+      font-size:15px;
+      color:var(--muted);
     }
 
     /* Chart container */
@@ -89,7 +130,7 @@
       color:var(--text);
     }
 
-    /* Footer (source + logo) */
+    /* Footer row: source note (left) + logo (right) */
     .footer{
       display:flex;
       align-items:center;
@@ -120,13 +161,16 @@
 <body>
   <div class="wrap">
     <div class="title">
-      <div class="l1">United States Median Rent</div>
+      <div class="l1" id="titleL1">Median Rent: United States</div>
       <div class="l2">Actual vs. Pre-Pandemic Trend: 2017-Present</div>
     </div>
 
     <div class="controls">
-      <label for="loc">Select geography</label>
-      <select id="loc"></select>
+      <label for="locSearch">Select geography</label>
+      <div class="combo" id="locCombo">
+        <input type="text" id="locSearch" autocomplete="off" placeholder="Type to search…" />
+        <div class="combo-list" id="locList"></div>
+      </div>
     </div>
 
     <div id="chart"></div>
@@ -143,82 +187,170 @@
   const CSV_PATH = "final_df.csv";
   const AXIS_FONT_SIZE = 18; // matches legend font size
 
-  // Chart sizing
-  const height = 600;                 // SVG height (plot area + margins)
-  const margin = { top: 20, right: 16, bottom: 46, left: 64 };
+  // Dash patterns: solid actual line, own-trend dash, national-average dash
+  const DASH_OWN = "9 5";
+  const DASH_NATL = "2 4";
 
-  // Internal plot height (axes included)
+  // Location-type sort order for the dropdown
+  const TYPE_ORDER = { National: 0, Metro: 1, State: 2, City: 3 };
+
+  // Chart sizing
+  const height = 600;
+  const margin = { top: 20, right: 16, bottom: 46, left: 64 };
   const innerH = height - margin.top - margin.bottom;
 
-  // Create tooltip
   const container = d3.select("#chart");
   const tooltip = container.append("div").attr("class", "tooltip");
 
-  // Parse/formatters
   const fmtMonth = d3.timeFormat("%b %Y");
   const fmtDollar0 = (v) => d3.format("$,.0f")(v);
+  const num = (v) => (v === "" || v == null ? null : +v);
 
-  // Load CSV
-  // NOTE: dates are constructed in LOCAL time (not UTC) so that d3's local-time
-  // helpers (timeYears, timeYear.floor/ceil, timeFormat) label months correctly
-  // regardless of the viewer's timezone offset from UTC.
+  // NOTE: dates are constructed in LOCAL time (not UTC) so d3's local-time
+  // helpers (timeYears, timeYear.floor/ceil, timeFormat) label months correctly.
   const raw = await d3.csv(CSV_PATH, d => ({
     location_id: +d.location_id,
+    location_type: d.location_type,
+    location_name: d.location_name,
     year: +d.year,
     month: +d.month,
     date: new Date(+d.year, (+d.month - 1), 1),
-    price_all_actual: d.price_all_actual === "" ? null : +d.price_all_actual,
-    price_all_prepan_trnd: d.price_all_prepan_trnd === "" ? null : +d.price_all_prepan_trnd
+    price_all_actual: num(d.price_all_actual),
+    price_all_prepan_trnd: num(d.price_all_prepan_trnd),
+    price_all_prepan_trnd_natl: num(d.price_all_prepan_trnd_natl)
   }));
 
-  // Build location list from the data (location_id 0 + others present)
-  const locationIds = Array.from(new Set(raw.map(d => d.location_id))).sort((a,b)=>a-b);
+  const locMeta = new Map();
+  raw.forEach(d => {
+    if (!locMeta.has(d.location_id)) {
+      locMeta.set(d.location_id, { type: d.location_type, name: d.location_name });
+    }
+  });
 
-  // Optional: if you later add a lookup CSV, you can replace labels here.
-  const labelFor = (id) => id === 0 ? "United States (National)" : `Metro ${id}`;
+  const locations = Array.from(locMeta, ([id, meta]) => ({ id, type: meta.type, name: meta.name }))
+    .sort((a, b) => {
+      const ta = TYPE_ORDER[a.type] ?? 99;
+      const tb = TYPE_ORDER[b.type] ?? 99;
+      if (ta !== tb) return ta - tb;
+      return (a.name || "").localeCompare(b.name || "");
+    });
 
-  // Populate dropdown
-  const select = d3.select("#loc");
-  select.selectAll("option")
-    .data(locationIds)
-    .join("option")
-    .attr("value", d => d)
-    .text(d => labelFor(d));
+  const labelFor = (loc) => `${loc.type} – ${loc.name}`;
 
-  select.property("value", 0);
+  // ---- Searchable combobox ----
+  const comboInput = document.getElementById("locSearch");
+  const comboList = document.getElementById("locList");
+  let activeIndex = -1;
+  let filtered = locations;
 
-  // Create SVG (responsive width via viewBox + preserveAspectRatio)
+  function filterLocations(q){
+    const query = q.trim().toLowerCase();
+    if (!query) return locations;
+    return locations.filter(loc => labelFor(loc).toLowerCase().includes(query));
+  }
+
+  function renderList(items){
+    comboList.innerHTML = "";
+    if (items.length === 0){
+      const empty = document.createElement("div");
+      empty.className = "combo-empty";
+      empty.textContent = "No matches";
+      comboList.appendChild(empty);
+      comboList.style.display = "block";
+      return;
+    }
+    items.forEach((loc, i) => {
+      const opt = document.createElement("div");
+      opt.className = "combo-option" + (i === activeIndex ? " active" : "");
+      opt.textContent = labelFor(loc);
+      opt.addEventListener("mousedown", (e) => {
+        e.preventDefault(); // don't blur before click registers
+        selectLocation(loc);
+      });
+      comboList.appendChild(opt);
+    });
+    comboList.style.display = "block";
+  }
+
+  function scrollActiveIntoView(){
+    const el = comboList.children[activeIndex];
+    if (el) el.scrollIntoView({ block: "nearest" });
+  }
+
+  function selectLocation(loc){
+    comboInput.value = labelFor(loc);
+    comboList.style.display = "none";
+    comboInput.blur();
+    update(loc.id);
+  }
+
+  comboInput.addEventListener("input", () => {
+    activeIndex = -1;
+    filtered = filterLocations(comboInput.value);
+    renderList(filtered);
+  });
+
+  comboInput.addEventListener("focus", () => {
+    filtered = filterLocations(comboInput.value);
+    renderList(filtered);
+  });
+
+  comboInput.addEventListener("keydown", (e) => {
+    if (comboList.style.display === "none" && e.key !== "Escape") {
+      filtered = filterLocations(comboInput.value);
+      renderList(filtered);
+    }
+    if (e.key === "ArrowDown"){
+      e.preventDefault();
+      activeIndex = Math.min(activeIndex + 1, filtered.length - 1);
+      renderList(filtered);
+      scrollActiveIntoView();
+    } else if (e.key === "ArrowUp"){
+      e.preventDefault();
+      activeIndex = Math.max(activeIndex - 1, 0);
+      renderList(filtered);
+      scrollActiveIntoView();
+    } else if (e.key === "Enter"){
+      e.preventDefault();
+      if (activeIndex >= 0 && filtered[activeIndex]) selectLocation(filtered[activeIndex]);
+    } else if (e.key === "Escape"){
+      comboList.style.display = "none";
+    }
+  });
+
+  document.addEventListener("click", (e) => {
+    if (!document.getElementById("locCombo").contains(e.target)){
+      comboList.style.display = "none";
+    }
+  });
+
+  const titleEl = document.getElementById("titleL1");
+
   const svg = container.append("svg")
     .attr("role", "img")
     .attr("aria-label", "Rent trend chart")
-    .attr("viewBox", `0 0 900 ${height}`)     // width will be scaled by CSS
+    .attr("viewBox", `0 0 900 ${height}`)
     .style("width", "100%")
     .style("height", "auto");
 
-  // Measure actual pixel width of the rendered container and scale x accordingly
-  // We'll use a dynamic scale based on the viewBox width (900).
   const viewW = 900;
   const innerW = viewW - margin.left - margin.right;
 
   const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
 
-  // Scales (x and y domains are set per-selection, since the y range is now dynamic)
   const x = d3.scaleTime().range([0, innerW]);
   const y = d3.scaleLinear().range([innerH, 0]);
 
-  // Gridlines (y only, at labeled ticks) -- rebuilt on every update since ticks are dynamic
   const grid = g.append("g").attr("class", "grid");
-
-  // Axes groups
   const gx = g.append("g").attr("transform", `translate(0,${innerH})`);
   const gy = g.append("g");
 
-  // Compute a dynamic y-domain (with padding) for the currently selected location
-  function computeYDomain(data){
+  function computeYDomain(data, isNational){
     const vals = [];
     data.forEach(d => {
       if (d.price_all_actual != null) vals.push(d.price_all_actual);
       if (d.price_all_prepan_trnd != null) vals.push(d.price_all_prepan_trnd);
+      if (!isNational && d.price_all_prepan_trnd_natl != null) vals.push(d.price_all_prepan_trnd_natl);
     });
     if (vals.length === 0) return [0, 1];
     const [lo, hi] = d3.extent(vals);
@@ -227,14 +359,11 @@
     return [lo - pad, hi + pad];
   }
 
-  // Axis + gridline renderer
-  function renderAxes(xDomain, data){
+  function renderAxes(xDomain, data, isNational){
     x.domain(xDomain);
-    y.domain(computeYDomain(data)).nice();
+    y.domain(computeYDomain(data, isNational)).nice();
 
     const yTicks = y.ticks(6);
-
-    // yearly ticks
     const years = d3.timeYears(
       d3.timeYear.floor(xDomain[0]),
       d3.timeYear.ceil(xDomain[1])
@@ -246,11 +375,7 @@
       .tickSizeOuter(0)
     );
 
-    // small hash marks: ensure visible ticks
-    gx.selectAll(".tick line")
-      .attr("y2", 6)
-      .attr("stroke", "#111");
-
+    gx.selectAll(".tick line").attr("y2", 6).attr("stroke", "#111");
     gx.selectAll(".domain").attr("stroke", "rgba(0,0,0,0.25)");
     gx.selectAll("text").attr("font-size", AXIS_FONT_SIZE);
 
@@ -261,10 +386,9 @@
     );
 
     gy.selectAll(".domain").remove();
-    gy.selectAll(".tick line").remove(); // no tick lines, just labels
+    gy.selectAll(".tick line").remove();
     gy.selectAll("text").attr("font-size", AXIS_FONT_SIZE);
 
-    // Redraw gridlines at the current (dynamic) y ticks
     grid.selectAll("line")
       .data(yTicks)
       .join("line")
@@ -274,105 +398,102 @@
       .attr("shape-rendering", "crispEdges");
   }
 
-  // Line generators
   const lineActual = d3.line()
     .defined(d => d.price_all_actual != null)
     .x(d => x(d.date))
     .y(d => y(d.price_all_actual));
 
-  const lineTrend = d3.line()
+  const lineOwnTrend = d3.line()
     .defined(d => d.price_all_prepan_trnd != null)
     .x(d => x(d.date))
     .y(d => y(d.price_all_prepan_trnd));
 
-  // Path elements
-  const pathActual = g.append("path")
-    .attr("fill", "none")
-    .attr("stroke", PURPLE)
-    .attr("stroke-width", 2);
+  const lineNatlTrend = d3.line()
+    .defined(d => d.price_all_prepan_trnd_natl != null)
+    .x(d => x(d.date))
+    .y(d => y(d.price_all_prepan_trnd_natl));
 
-  const pathTrend = g.append("path")
-    .attr("fill", "none")
-    .attr("stroke", PURPLE)
-    .attr("stroke-width", 2)
-    .attr("stroke-dasharray", "8 6");
+  const pathActual = g.append("path").attr("fill", "none").attr("stroke", PURPLE).attr("stroke-width", 2);
+  const pathOwnTrend = g.append("path").attr("fill", "none").attr("stroke", PURPLE).attr("stroke-width", 2).attr("stroke-dasharray", DASH_OWN);
+  const pathNatlTrend = g.append("path").attr("fill", "none").attr("stroke", PURPLE).attr("stroke-width", 2).attr("stroke-dasharray", DASH_NATL);
 
-  // Legend (upper-left of the plot area)
-  const legend = g.append("g")
-    .attr("transform", `translate(${12},${10})`);
+  const legend = g.append("g").attr("transform", `translate(${12},${10})`);
+  const legendBg = legend.append("rect").attr("rx", 8).attr("ry", 8).attr("fill", "rgba(255,255,255,0.75)").attr("stroke", "rgba(0,0,0,0.0)");
+  const legendRows = legend.append("g");
 
-  // Background
-  const legendBg = legend.append("rect")
-    .attr("x", -8).attr("y", -10)
-    .attr("width", 230).attr("height", 64)
-    .attr("rx", 8).attr("ry", 8)
-    .attr("fill", "rgba(255,255,255,0.75)")
-    .attr("stroke", "rgba(0,0,0,0.0)");
+  function renderLegend(items){
+    const rowH = 28;
+    const padSide = 8;
+    const width = 230;
+    const legendHeight = 10 + items.length * rowH + 8 - (rowH - 18);
 
-  // Legend rows
-  const legRow1 = legend.append("g").attr("transform", "translate(0,4)");
-  const legRow2 = legend.append("g").attr("transform", "translate(0,32)");
+    legendBg.attr("x", -padSide).attr("y", -10).attr("width", width).attr("height", legendHeight);
 
-  // Actual sample
-  legRow1.append("line")
-    .attr("x1", 0).attr("x2", 54)
-    .attr("y1", 0).attr("y2", 0)
-    .attr("stroke", PURPLE)
-    .attr("stroke-width", 3);
+    const rows = legendRows.selectAll("g.leg-row").data(items, d => d.label);
+    rows.exit().remove();
+    const rowsEnter = rows.enter().append("g").attr("class", "leg-row");
+    rowsEnter.append("line");
+    rowsEnter.append("text");
 
-  legRow1.append("text")
-    .attr("x", 62).attr("y", 5)
-    .attr("font-size", 18)
-    .text("Actual");
+    const rowsMerged = rowsEnter.merge(rows);
+    rowsMerged.attr("transform", (d, i) => `translate(0, ${4 + i * rowH})`);
 
-  // Trend sample (long enough to show multiple dashes)
-  legRow2.append("line")
-    .attr("x1", 0).attr("x2", 54)
-    .attr("y1", 0).attr("y2", 0)
-    .attr("stroke", PURPLE)
-    .attr("stroke-width", 3)
-    .attr("stroke-dasharray", "8 6");
+    rowsMerged.select("line")
+      .attr("x1", 0).attr("x2", 54).attr("y1", 0).attr("y2", 0)
+      .attr("stroke", PURPLE).attr("stroke-width", 3)
+      .attr("stroke-dasharray", d => d.dash || null);
 
-  legRow2.append("text")
-    .attr("x", 62).attr("y", 5)
-    .attr("font-size", 18)
-    .text("Pre-pandemic trend");
+    rowsMerged.select("text")
+      .attr("x", 62).attr("y", 5).attr("font-size", 18)
+      .text(d => d.label);
+  }
 
-  // Hover interaction: vertical rule + circles
   const hover = g.append("g").style("display", "none");
-  hover.append("line")
-    .attr("class", "hover-line")
-    .attr("y1", 0).attr("y2", innerH)
-    .attr("stroke", "rgba(0,0,0,0.25)")
-    .attr("stroke-width", 1);
-
+  hover.append("line").attr("class", "hover-line").attr("y1", 0).attr("y2", innerH).attr("stroke", "rgba(0,0,0,0.25)").attr("stroke-width", 1);
   const dotA = hover.append("circle").attr("r", 4).attr("fill", PURPLE);
-  const dotT = hover.append("circle").attr("r", 4).attr("fill", PURPLE);
+  const dotO = hover.append("circle").attr("r", 4).attr("fill", PURPLE);
+  const dotN = hover.append("circle").attr("r", 4).attr("fill", PURPLE);
 
-  // Overlay for mouse events
-  const overlay = g.append("rect")
-    .attr("fill", "transparent")
-    .attr("width", innerW)
-    .attr("height", innerH);
+  const overlay = g.append("rect").attr("fill", "transparent").attr("width", innerW).attr("height", innerH);
 
-  // State
-  let current = raw.filter(d => d.location_id === 0).sort((a,b)=>a.date-b.date);
+  let current = [];
+  let isNational = true;
 
   function update(locationId){
-    current = raw.filter(d => d.location_id === +locationId).sort((a,b)=>a.date-b.date);
+    const id = +locationId;
+    const meta = locMeta.get(id) || { type: "National", name: "United States" };
+    isNational = meta.type === "National";
+
+    current = raw.filter(d => d.location_id === id).sort((a,b)=>a.date-b.date);
+
+    titleEl.textContent = `Median Rent: ${meta.name}`;
 
     const xDomain = d3.extent(current, d => d.date);
-    renderAxes(xDomain, current);
+    renderAxes(xDomain, current, isNational);
 
     pathActual.attr("d", lineActual(current));
-    pathTrend.attr("d", lineTrend(current));
+    pathOwnTrend.attr("d", lineOwnTrend(current));
 
-    // Hide hover when switching
+    if (isNational){
+      pathNatlTrend.attr("d", null);
+      dotN.style("display", "none");
+      renderLegend([
+        { label: "Actual", dash: null },
+        { label: "Pre-pandemic trend", dash: DASH_OWN }
+      ]);
+    } else {
+      pathNatlTrend.attr("d", lineNatlTrend(current));
+      renderLegend([
+        { label: "Actual", dash: null },
+        { label: `Pre-pandemic trend (${meta.type}-specific)`, dash: DASH_OWN },
+        { label: "Pre-pandemic trend (National average)", dash: DASH_NATL }
+      ]);
+    }
+
     hover.style("display", "none");
     tooltip.style("opacity", 0);
   }
 
-  // Tooltip + hover handler
   const bisect = d3.bisector(d => d.date).left;
 
   overlay.on("mousemove", function(event){
@@ -385,36 +506,28 @@
     if (!a || !b) return;
 
     const d = (date - a.date) > (b.date - date) ? b : a;
-
     const xPos = x(d.date);
 
-    // Compute y positions if available
     const ya = d.price_all_actual != null ? y(d.price_all_actual) : null;
-    const yt = d.price_all_prepan_trnd != null ? y(d.price_all_prepan_trnd) : null;
+    const yo = d.price_all_prepan_trnd != null ? y(d.price_all_prepan_trnd) : null;
+    const yn = (!isNational && d.price_all_prepan_trnd_natl != null) ? y(d.price_all_prepan_trnd_natl) : null;
 
     hover.style("display", null);
-    hover.select(".hover-line")
-      .attr("x1", xPos).attr("x2", xPos);
+    hover.select(".hover-line").attr("x1", xPos).attr("x2", xPos);
 
-    if (ya != null){
-      dotA.attr("cx", xPos).attr("cy", ya).style("display", null);
-    } else {
-      dotA.style("display", "none");
-    }
-    if (yt != null){
-      dotT.attr("cx", xPos).attr("cy", yt).style("display", null);
-    } else {
-      dotT.style("display", "none");
-    }
+    if (ya != null){ dotA.attr("cx", xPos).attr("cy", ya).style("display", null); } else { dotA.style("display", "none"); }
+    if (yo != null){ dotO.attr("cx", xPos).attr("cy", yo).style("display", null); } else { dotO.style("display", "none"); }
+    if (yn != null){ dotN.attr("cx", xPos).attr("cy", yn).style("display", null); } else { dotN.style("display", "none"); }
 
-    // Tooltip content
     const lines = [
       `<div><b>${fmtMonth(d.date)}</b></div>`,
       ya != null ? `<div>Actual: <b>${fmtDollar0(d.price_all_actual)}</b></div>` : "",
-      yt != null ? `<div>Pre-pandemic trend: <b>${fmtDollar0(d.price_all_prepan_trnd)}</b></div>` : ""
+      yo != null ? (isNational
+        ? `<div>Pre-pandemic trend: <b>${fmtDollar0(d.price_all_prepan_trnd)}</b></div>`
+        : `<div>${locMeta.get(d.location_id).type}-specific trend: <b>${fmtDollar0(d.price_all_prepan_trnd)}</b></div>`) : "",
+      yn != null ? `<div>National average trend: <b>${fmtDollar0(d.price_all_prepan_trnd_natl)}</b></div>` : ""
     ].filter(Boolean).join("");
 
-    // Set content first so we can measure its rendered size for bounds-clamping
     tooltip.html(lines);
 
     const bbox = container.node().getBoundingClientRect();
@@ -422,22 +535,16 @@
     const ttRect = tooltip.node().getBoundingClientRect();
 
     const pointX = (svgBox.left - bbox.left) + margin.left + xPos;
-    const pointY = (svgBox.top - bbox.top) + margin.top + (Math.min(ya ?? innerH/2, yt ?? innerH/2));
+    const yCandidates = [ya, yo, yn].filter(v => v != null);
+    const pointY = (svgBox.top - bbox.top) + margin.top + (yCandidates.length ? Math.min(...yCandidates) : innerH/2);
 
-    const gap = 10; // vertical gap between the point and the tooltip
-
-    // Horizontal: center on the point, then clamp within the container's bounds
+    const gap = 10;
     let left = pointX - ttRect.width / 2;
     left = Math.max(4, Math.min(left, bbox.width - ttRect.width - 4));
-
-    // Vertical: sit above the point by default, clamp so it never goes above the container
     let top = pointY - ttRect.height - gap;
     top = Math.max(4, top);
 
-    tooltip
-      .style("left", `${left}px`)
-      .style("top", `${top}px`)
-      .style("opacity", 1);
+    tooltip.style("left", `${left}px`).style("top", `${top}px`).style("opacity", 1);
   });
 
   overlay.on("mouseleave", function(){
@@ -445,11 +552,10 @@
     tooltip.style("opacity", 0);
   });
 
-  // Dropdown handler
-  select.on("change", (event) => update(event.target.value));
-
   // Initial render
-  update(0);
+  const initial = locations.find(l => l.id === 0) || locations[0];
+  comboInput.value = labelFor(initial);
+  update(initial.id);
 
 })();
 </script>

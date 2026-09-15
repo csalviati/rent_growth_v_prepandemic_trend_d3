@@ -22,85 +22,41 @@ con <- dbConnect(
 ```{r}
 index_data <- dbGetQuery(con,
   "
-  select *
-  from alist-production.analytics.rent_report_price_indexes;
+  select 
+    i.location_id, 
+    l.display_name,
+    case when i.location_id = 0 then 'National'
+         when i.location_id is not null and l.display_name is null then 'Metro'
+         else l.type end as location_type,
+    case when i.location_id = 0 then 'United States'
+         when i.location_id is not null and l.display_name is null then xwalk2.cbsa_name
+         else l.display_name end as location_name,
+    i.year, 
+    i.month, 
+    i.population,
+    i.moving_avg_price_index,
+    i.price_all,
+    i.price_1br,
+    i.price_2br,
+    i.transaction_count,
+    xwalk.state_fips_code,
+    xwalk.state_name as state,
+    xwalk.county_fips_code,
+    xwalk.county_name as county,
+    xwalk.place_fips_code,
+    xwalk.place_name as place,
+    xwalk.cbsa_fips_code,
+    xwalk.cbsa_name as metro
+  from `alist-production.analytics.rent_report_price_indexes` i   
+  left join `alist-production.api.locations` l
+    on i.location_id = l.id
+  left join `alist-production-scratch.rwarnock.al_to_fips_mapping` xwalk
+    on i.location_id = xwalk.id
+  left join (select distinct cbsa_fips_code, cbsa_name from `alist-production-scratch.rwarnock.al_to_fips_mapping`) xwalk2
+    on cast(i.location_id as string) = xwalk2.cbsa_fips_code
+  where l.type is null or l.type in ('State', 'County', 'City');
   ") 
 ```
-## Create alt-natl index based on weighting of metro-level
-```{r}
-month_ct_natl <- index_data %>% 
-  filter(location_id == 0) %>%
-  count() %>%
-  pull()
-
-top100_metros <- index_data %>%
-  filter(location_id == cbsa_fips & !is.na(moving_avg_price_index)) %>%
-  group_by(location_id, population) %>%
-  summarise(month_ct = n()) %>%
-  ungroup() %>%
-  filter(month_ct == month_ct_natl) %>%
-  top_n(100, wt = population) %>%
-  select(location_id)
-
-index_natl_alt <- index_data %>%
-  filter(location_id %in% pull(top100_metros, location_id)) %>%
-  group_by(year, month) %>%
-  summarise(moving_avg_price_index = weighted.mean(moving_avg_price_index, wt = population),
-            price_all = weighted.mean(price_all, wt = population)) %>%
-  ungroup() %>%
-  arrange(year, month) %>%
-  mutate(yoy_chg = (moving_avg_price_index / lag(moving_avg_price_index, 12)) - 1,
-         yoy_chg2 = (price_all / lag(price_all, 12)) - 1)
-  
-
-```
-
-## Create alt-natl index based on weighting of state-level
-```{r}
-month_ct_natl <- index_data %>% 
-  filter(location_id == 0) %>%
-  count() %>%
-  pull()
-
-states <- index_data %>%
-  filter(!is.na(state_fips) & is.na(cbsa_fips) & is.na(county_fips) & !is.na(moving_avg_price_index)) %>%
-  group_by(location_id, population) %>%
-  summarise(month_ct = n()) %>%
-  ungroup() %>%
-  filter(month_ct == month_ct_natl) %>%
-  top_n(100, wt = population) %>%
-  select(location_id)
-
-index_natl_alt <- index_data %>%
-  filter(location_id %in% pull(top100_metros, location_id)) %>%
-  group_by(year, month) %>%
-  summarise(moving_avg_price_index = weighted.mean(moving_avg_price_index, wt = population, na.rm = TRUE),
-            price_all = weighted.mean(price_all, wt = population, na.rm = TRUE)) %>%
-  ungroup() %>%
-  arrange(year, month) %>%
-  mutate(yoy_chg = (moving_avg_price_index / lag(moving_avg_price_index, 12)) - 1,
-         yoy_chg2 = (price_all / lag(price_all, 12)) - 1)
-
-
-index_natl_alt2 <- index_data %>%
-  filter(location_id %in% pull(top100_metros, location_id)) %>%
-  mutate(moving_avg_price_index_wt = moving_avg_price_index * population,
-         price_all_wt = price_all * population) %>%
-  select(year, month, moving_avg_price_index_wt, price_all_wt, population) %>%
-  group_by(year, month) %>%
-  summarise_all(sum) %>%
-  ungroup() %>%
-  arrange(year, month) %>%
-  mutate(moving_avg_price_index = moving_avg_price_index_wt / population,
-         price_all = price_all_wt / population,
-         yoy_chg = (moving_avg_price_index / lag(moving_avg_price_index, 12)) - 1,
-         yoy_chg2 = (price_all / lag(price_all, 12)) - 1,
-         location_id = -1) %>%
-  select(location_id, year, month, moving_avg_price_index, price_all) 
-  
-
-```
-
 
 ```{r}
 start_date <- ymd("2020-03-01")
@@ -108,54 +64,57 @@ base_date  <- start_date %m-% months(1)  # Typically 2020-02-01
 
 prepan_year_min <- 2017L
 prepan_year_max <- 2019L
-
 ```
 
+Build a working frame with a proper date column.
 
-Identify national + top 50 metros
-Metro identification logic
-
-A row is treated as metro-level when:
-
-cbsa_fips is not missing, and
-
-county_fips is missing
-
-Adjust this logic if your dataset defines metros differently.
 ```{r}
 df_locs <- index_data %>%
-  bind_rows(index_natl_alt2) %>%
-  mutate(
-    date = ymd(sprintf("%04d-%02d-01", year, month)),
-    is_national = location_id <= 0,
-    is_metro = !is.na(cbsa_fips) & is.na(county_fips)
-  )
+  mutate(date = ymd(sprintf("%04d-%02d-01", year, month)))
+```
 
-# Identify the 50 largest metros by population (using max observed population per location_id)
-top_50_metros <- df_locs %>%
-  filter(is_metro) %>%
-  group_by(location_id) %>%
-  summarise(population = max(population, na.rm = TRUE), .groups = "drop") %>%
-  arrange(desc(population)) %>%
-  slice_head(n = 50) %>%
-  pull(location_id)
+Identify the locations to keep: National, the 50 largest metros, all states, and the
+100 largest cities. "Largest" is by max observed population, and we require full
+historical coverage (same month count as the national series) so partial-history
+locations don't skew the 2017-2019 seasonal growth averages.
 
-locations_keep <- c(-1, 0, top_50_metros)
+```{r}
+month_ct_natl <- df_locs %>%
+  filter(location_id == 0) %>%
+  count() %>%
+  pull()
+
+select_top_n_locations <- function(df, type, n = Inf) {
+  df %>%
+    filter(location_type == type, !is.na(moving_avg_price_index)) %>%
+    group_by(location_id, population) %>%
+    summarise(month_ct = n(), .groups = "drop") %>%
+    filter(month_ct == month_ct_natl) %>%
+    group_by(location_id) %>%
+    summarise(population = max(population, na.rm = TRUE), .groups = "drop") %>%
+    arrange(desc(population)) %>%
+    { if (is.finite(n)) slice_head(., n = n) else . } %>%
+    pull(location_id)
+}
+
+top_50_metros <- select_top_n_locations(df_locs, "Metro", 50)
+top_100_cities <- select_top_n_locations(df_locs, "City", 100)
+all_states     <- select_top_n_locations(df_locs, "State")   # no cap: keep every state
+
+locations_keep <- c(0, top_50_metros, all_states, top_100_cities)
 
 df_keep <- df_locs %>%
   filter(location_id %in% locations_keep) %>%
   select(
-    location_id, year, month, date,
-    population, price_all, moving_avg_price_index,
-    cbsa_fips, county_fips
+    location_id, location_type, location_name, year, month, date,
+    population, price_all, moving_avg_price_index
   )
 
-# Quick check: should be 51 locations (1 national + 50 metros)
+# Quick check: should be 1 (national) + up to 50 metros + all states + up to 100 cities
 temp <- df_keep %>%
   distinct(location_id) %>%
   summarise(n_locations = n())
 ```
-
 
 Compute actual MoM growth rates
 
@@ -172,7 +131,9 @@ df_mom <- df_keep %>%
 
 ```
 
-Compute average MoM growth during 2017–2019
+Compute average MoM growth during 2017-2019, both for each location individually and
+for the national series (the latter gets reused for every location's "national
+average" extrapolation line below).
 ```{r}
 avg_prepan_growth_monthly <- df_mom %>%
   filter(year >= prepan_year_min, year <= prepan_year_max) %>%
@@ -182,25 +143,38 @@ avg_prepan_growth_monthly <- df_mom %>%
     .groups = "drop"
   )
 
+national_avg_growth_monthly <- avg_prepan_growth_monthly %>%
+  filter(location_id == 0) %>%
+  select(month, avg_mom_growth_natl_m = avg_mom_growth_2017_2019_m)
+
 # Quick peek: national seasonal pattern
 avg_prepan_growth_monthly %>%
   filter(location_id == 0) %>%
   arrange(month)
 ```
 
-Construct the counterfactual pre-pandemic trend
+Construct the counterfactual pre-pandemic trend(s)
 
 Method:
 
 Use actual prices through February 2020 (or last available pre-March observation).
 
-From March 2020 onward, apply a constant MoM growth rate equal to the location’s 2017–2019 average.
+From March 2020 onward, apply a constant MoM growth rate. Two variants are built for
+every non-national location:
 
-Pre-period values match actuals exactly.
+  - `price_all_prepan_trnd` / `mom_chg_prepan_trnd`: uses that location's OWN
+    2017-2019 average seasonal growth rate (location-specific trend).
+  - `price_all_prepan_trnd_natl` / `mom_chg_prepan_trnd_natl`: uses the NATIONAL
+    2017-2019 average seasonal growth rate applied to that location's own anchor
+    price (national-average trend). For the national series itself these two are
+    identical by construction.
+
+Pre-period values match actuals exactly in both variants.
 
 ```{r}
 final_df <- df_mom %>%
   left_join(avg_prepan_growth_monthly, by = c("location_id", "month")) %>%
+  left_join(national_avg_growth_monthly, by = "month") %>%
   group_by(location_id) %>%
   arrange(date, .by_group = TRUE) %>%
   mutate(
@@ -228,44 +202,59 @@ final_df <- df_mom %>%
       }
     },
 
-    # For post-period months, use seasonal (month-of-year) average growth; pre-period not used for projection
+    ## --- Location-specific trend ---
     mom_chg_prepan_trnd = case_when(
       !is_post ~ mom_chg_actual,
       TRUE ~ avg_mom_growth_2017_2019_m
     ),
-
-    # Build cumulative multiplier using seasonal growth starting March 2020 (1 elsewhere)
-    growth_mult = case_when(
+    growth_mult_own = case_when(
       is_post ~ 1 + avg_mom_growth_2017_2019_m,
       TRUE ~ 1
     ),
-
-    cum_mult = cumprod(replace_na(growth_mult, 1)),
-
-    # Rebase the cumulative multiplier at the anchor date (Feb 2020 if present, else last pre-March month)
-    base_cum_mult = {
-      m0 <- cum_mult[date == base_date_used]
+    cum_mult_own = cumprod(replace_na(growth_mult_own, 1)),
+    base_cum_mult_own = {
+      m0 <- cum_mult_own[date == base_date_used]
       if (length(m0) == 1 && !is.na(m0)) m0 else NA_real_
     },
-
-    # Counterfactual price: equals actual pre-period; equals base_price * (cum_mult / base_cum_mult) post-period
     price_all_prepan_trnd = case_when(
       !is_post ~ price_all_actual,
-      TRUE ~ base_price * (cum_mult / base_cum_mult)
+      TRUE ~ base_price * (cum_mult_own / base_cum_mult_own)
+    ),
+
+    ## --- National-average trend (same seasonal rates for every location) ---
+    mom_chg_prepan_trnd_natl = case_when(
+      !is_post ~ mom_chg_actual,
+      TRUE ~ avg_mom_growth_natl_m
+    ),
+    growth_mult_natl = case_when(
+      is_post ~ 1 + avg_mom_growth_natl_m,
+      TRUE ~ 1
+    ),
+    cum_mult_natl = cumprod(replace_na(growth_mult_natl, 1)),
+    base_cum_mult_natl = {
+      m0 <- cum_mult_natl[date == base_date_used]
+      if (length(m0) == 1 && !is.na(m0)) m0 else NA_real_
+    },
+    price_all_prepan_trnd_natl = case_when(
+      !is_post ~ price_all_actual,
+      TRUE ~ base_price * (cum_mult_natl / base_cum_mult_natl)
     )
   ) %>%
   ungroup() %>%
   select(
-    location_id, year, month,
+    location_id, location_type, location_name, year, month,
     price_all_actual, mom_chg_actual,
-    price_all_prepan_trnd, mom_chg_prepan_trnd
+    price_all_prepan_trnd, mom_chg_prepan_trnd,
+    price_all_prepan_trnd_natl, mom_chg_prepan_trnd_natl
   ) %>%
-  arrange(location_id, year, month)
+  arrange(location_type, location_name, year, month)
 
 # Quick check around the breakpoint for national
 final_df %>%
   filter(location_id == 0, year %in% 2019:2021) %>%
   print(n = 50)
+
+readr::write_csv(final_df, "final_df.csv")
 
 readr::write_csv(final_df, "/Users/christophersalviati/Library/CloudStorage/GoogleDrive-csalviati@apartmentlist.com/Shared drives/Comms Team/Research Team/_Articles/Rent Growth vs Pre-Pandemic Trend/final_df.csv")
 
@@ -293,7 +282,6 @@ showtext_auto(enable = TRUE)
 
 # ---- Build plot data ----
 national_plot_df <- final_df %>%
-  #filter(location_id == -1) %>%
   filter(location_id == 0) %>%
   mutate(date = ymd(sprintf("%04d-%02d-01", year, month))) %>%
   select(date, price_all_actual, price_all_prepan_trnd) %>%
@@ -489,5 +477,3 @@ if (has_ragg) {
   dev.off()
 }
 ```
-
-
