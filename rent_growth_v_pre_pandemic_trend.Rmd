@@ -1,0 +1,493 @@
+---
+title: "rent_growth_v_pre_pandemic_trend"
+output: html_document
+date: "2026-01-22"
+---
+
+```{r}
+library(bigrquery)
+library(tidyverse)
+library(DBI)
+```
+
+```{r}
+con <- dbConnect(
+  bigrquery::bigquery(),
+  project = "alist-production-scratch",
+  dataset = "salviati",
+  billing = "alist-production-scratch"
+)
+```
+
+```{r}
+index_data <- dbGetQuery(con,
+  "
+  select *
+  from alist-production.analytics.rent_report_price_indexes;
+  ") 
+```
+## Create alt-natl index based on weighting of metro-level
+```{r}
+month_ct_natl <- index_data %>% 
+  filter(location_id == 0) %>%
+  count() %>%
+  pull()
+
+top100_metros <- index_data %>%
+  filter(location_id == cbsa_fips & !is.na(moving_avg_price_index)) %>%
+  group_by(location_id, population) %>%
+  summarise(month_ct = n()) %>%
+  ungroup() %>%
+  filter(month_ct == month_ct_natl) %>%
+  top_n(100, wt = population) %>%
+  select(location_id)
+
+index_natl_alt <- index_data %>%
+  filter(location_id %in% pull(top100_metros, location_id)) %>%
+  group_by(year, month) %>%
+  summarise(moving_avg_price_index = weighted.mean(moving_avg_price_index, wt = population),
+            price_all = weighted.mean(price_all, wt = population)) %>%
+  ungroup() %>%
+  arrange(year, month) %>%
+  mutate(yoy_chg = (moving_avg_price_index / lag(moving_avg_price_index, 12)) - 1,
+         yoy_chg2 = (price_all / lag(price_all, 12)) - 1)
+  
+
+```
+
+## Create alt-natl index based on weighting of state-level
+```{r}
+month_ct_natl <- index_data %>% 
+  filter(location_id == 0) %>%
+  count() %>%
+  pull()
+
+states <- index_data %>%
+  filter(!is.na(state_fips) & is.na(cbsa_fips) & is.na(county_fips) & !is.na(moving_avg_price_index)) %>%
+  group_by(location_id, population) %>%
+  summarise(month_ct = n()) %>%
+  ungroup() %>%
+  filter(month_ct == month_ct_natl) %>%
+  top_n(100, wt = population) %>%
+  select(location_id)
+
+index_natl_alt <- index_data %>%
+  filter(location_id %in% pull(top100_metros, location_id)) %>%
+  group_by(year, month) %>%
+  summarise(moving_avg_price_index = weighted.mean(moving_avg_price_index, wt = population, na.rm = TRUE),
+            price_all = weighted.mean(price_all, wt = population, na.rm = TRUE)) %>%
+  ungroup() %>%
+  arrange(year, month) %>%
+  mutate(yoy_chg = (moving_avg_price_index / lag(moving_avg_price_index, 12)) - 1,
+         yoy_chg2 = (price_all / lag(price_all, 12)) - 1)
+
+
+index_natl_alt2 <- index_data %>%
+  filter(location_id %in% pull(top100_metros, location_id)) %>%
+  mutate(moving_avg_price_index_wt = moving_avg_price_index * population,
+         price_all_wt = price_all * population) %>%
+  select(year, month, moving_avg_price_index_wt, price_all_wt, population) %>%
+  group_by(year, month) %>%
+  summarise_all(sum) %>%
+  ungroup() %>%
+  arrange(year, month) %>%
+  mutate(moving_avg_price_index = moving_avg_price_index_wt / population,
+         price_all = price_all_wt / population,
+         yoy_chg = (moving_avg_price_index / lag(moving_avg_price_index, 12)) - 1,
+         yoy_chg2 = (price_all / lag(price_all, 12)) - 1,
+         location_id = -1) %>%
+  select(location_id, year, month, moving_avg_price_index, price_all) 
+  
+
+```
+
+
+```{r}
+start_date <- ymd("2020-03-01")
+base_date  <- start_date %m-% months(1)  # Typically 2020-02-01
+
+prepan_year_min <- 2017L
+prepan_year_max <- 2019L
+
+```
+
+
+Identify national + top 50 metros
+Metro identification logic
+
+A row is treated as metro-level when:
+
+cbsa_fips is not missing, and
+
+county_fips is missing
+
+Adjust this logic if your dataset defines metros differently.
+```{r}
+df_locs <- index_data %>%
+  bind_rows(index_natl_alt2) %>%
+  mutate(
+    date = ymd(sprintf("%04d-%02d-01", year, month)),
+    is_national = location_id <= 0,
+    is_metro = !is.na(cbsa_fips) & is.na(county_fips)
+  )
+
+# Identify the 50 largest metros by population (using max observed population per location_id)
+top_50_metros <- df_locs %>%
+  filter(is_metro) %>%
+  group_by(location_id) %>%
+  summarise(population = max(population, na.rm = TRUE), .groups = "drop") %>%
+  arrange(desc(population)) %>%
+  slice_head(n = 50) %>%
+  pull(location_id)
+
+locations_keep <- c(-1, 0, top_50_metros)
+
+df_keep <- df_locs %>%
+  filter(location_id %in% locations_keep) %>%
+  select(
+    location_id, year, month, date,
+    population, price_all, moving_avg_price_index,
+    cbsa_fips, county_fips
+  )
+
+# Quick check: should be 51 locations (1 national + 50 metros)
+temp <- df_keep %>%
+  distinct(location_id) %>%
+  summarise(n_locations = n())
+```
+
+
+Compute actual MoM growth rates
+
+MoM growth is calculated using moving_avg_price_index.
+```{r}
+df_mom <- df_keep %>%
+  arrange(location_id, date) %>%
+  group_by(location_id) %>%
+  mutate(
+    price_all_actual = price_all,
+    mom_chg_actual = (moving_avg_price_index / lag(moving_avg_price_index)) - 1
+  ) %>%
+  ungroup()
+
+```
+
+Compute average MoM growth during 2017–2019
+```{r}
+avg_prepan_growth_monthly <- df_mom %>%
+  filter(year >= prepan_year_min, year <= prepan_year_max) %>%
+  group_by(location_id, month) %>%
+  summarise(
+    avg_mom_growth_2017_2019_m = mean(mom_chg_actual, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Quick peek: national seasonal pattern
+avg_prepan_growth_monthly %>%
+  filter(location_id == 0) %>%
+  arrange(month)
+```
+
+Construct the counterfactual pre-pandemic trend
+
+Method:
+
+Use actual prices through February 2020 (or last available pre-March observation).
+
+From March 2020 onward, apply a constant MoM growth rate equal to the location’s 2017–2019 average.
+
+Pre-period values match actuals exactly.
+
+```{r}
+final_df <- df_mom %>%
+  left_join(avg_prepan_growth_monthly, by = c("location_id", "month")) %>%
+  group_by(location_id) %>%
+  arrange(date, .by_group = TRUE) %>%
+  mutate(
+    is_post = date >= start_date,
+
+    # Anchor price: prefer Feb 2020, else last observed pre-March 2020
+    base_price = {
+      p_feb <- price_all_actual[date == base_date]
+      if (length(p_feb) == 1 && !is.na(p_feb)) {
+        p_feb
+      } else {
+        p_last <- price_all_actual[date < start_date]
+        if (length(p_last) == 0) NA_real_ else tail(p_last, 1)
+      }
+    },
+
+    # Anchor date: prefer Feb 2020, else last observed pre-March 2020
+    base_date_used = {
+      d_feb <- date[date == base_date]
+      if (length(d_feb) == 1 && !is.na(d_feb)) {
+        d_feb
+      } else {
+        d_pre <- date[date < start_date]
+        if (length(d_pre) == 0) as.Date(NA) else tail(d_pre, 1)
+      }
+    },
+
+    # For post-period months, use seasonal (month-of-year) average growth; pre-period not used for projection
+    mom_chg_prepan_trnd = case_when(
+      !is_post ~ mom_chg_actual,
+      TRUE ~ avg_mom_growth_2017_2019_m
+    ),
+
+    # Build cumulative multiplier using seasonal growth starting March 2020 (1 elsewhere)
+    growth_mult = case_when(
+      is_post ~ 1 + avg_mom_growth_2017_2019_m,
+      TRUE ~ 1
+    ),
+
+    cum_mult = cumprod(replace_na(growth_mult, 1)),
+
+    # Rebase the cumulative multiplier at the anchor date (Feb 2020 if present, else last pre-March month)
+    base_cum_mult = {
+      m0 <- cum_mult[date == base_date_used]
+      if (length(m0) == 1 && !is.na(m0)) m0 else NA_real_
+    },
+
+    # Counterfactual price: equals actual pre-period; equals base_price * (cum_mult / base_cum_mult) post-period
+    price_all_prepan_trnd = case_when(
+      !is_post ~ price_all_actual,
+      TRUE ~ base_price * (cum_mult / base_cum_mult)
+    )
+  ) %>%
+  ungroup() %>%
+  select(
+    location_id, year, month,
+    price_all_actual, mom_chg_actual,
+    price_all_prepan_trnd, mom_chg_prepan_trnd
+  ) %>%
+  arrange(location_id, year, month)
+
+# Quick check around the breakpoint for national
+final_df %>%
+  filter(location_id == 0, year %in% 2019:2021) %>%
+  print(n = 50)
+
+readr::write_csv(final_df, "/Users/christophersalviati/Library/CloudStorage/GoogleDrive-csalviati@apartmentlist.com/Shared drives/Comms Team/Research Team/_Articles/Rent Growth vs Pre-Pandemic Trend/final_df.csv")
+
+readr::write_csv(final_df, "/Users/christophersalviati/Library/CloudStorage/GoogleDrive-csalviati@apartmentlist.com/Shared drives/Comms Team/Research Team/_Articles/Rent Growth vs Pre-Pandemic Trend/rent_growth_v_prepandemic_trend_shiny/final_df.csv")
+```
+  National chart: actual vs. counterfactual trend
+```{r}
+library(tidyverse)
+library(lubridate)
+library(scales)
+library(showtext)
+library(systemfonts)
+
+library(grid)
+library(gridExtra)
+library(png)
+library(magick)
+
+has_ragg <- requireNamespace("ragg", quietly = TRUE)
+
+# ---- Font setup ----
+available_families <- unique(systemfonts::system_fonts()$family)
+font_family <- if ("Proxima Nova" %in% available_families) "Proxima Nova" else "sans"
+showtext_auto(enable = TRUE)
+
+# ---- Build plot data ----
+national_plot_df <- final_df %>%
+  #filter(location_id == -1) %>%
+  filter(location_id == 0) %>%
+  mutate(date = ymd(sprintf("%04d-%02d-01", year, month))) %>%
+  select(date, price_all_actual, price_all_prepan_trnd) %>%
+  pivot_longer(
+    cols = c(price_all_actual, price_all_prepan_trnd),
+    names_to = "series",
+    values_to = "price_all"
+  ) %>%
+  mutate(
+    series = recode(
+      series,
+      price_all_actual = "Actual",
+      price_all_prepan_trnd = "Pre-pandemic trend"
+    ),
+    series = factor(series, levels = c("Actual", "Pre-pandemic trend"))
+  )
+
+# ---- Output sizing ----
+dpi <- 96
+
+# Inner plot image size (content area) + outer padding
+inner_w_px <- 754
+inner_h_px <- 600
+pad_px <- 5
+
+out_w_px <- inner_w_px + 2 * pad_px
+out_h_px <- inner_h_px + 2 * pad_px
+
+# Footer + logo sizing (per your update)
+footer_h_px <- 60
+logo_h_px <- 40
+
+# Title block to prevent overlap (extra space above plot area)
+title_h_px <- 55  # adjust up/down if you want more/less space
+
+# Helpers
+px_to_in <- function(px, dpi) px / dpi
+px_to_pt <- function(px, dpi) px * 72 / dpi
+
+footer_h_pt <- px_to_pt(footer_h_px, dpi)
+title_h_pt  <- px_to_pt(title_h_px, dpi)
+pad_pt      <- px_to_pt(pad_px, dpi)
+logo_h_in   <- px_to_in(logo_h_px, dpi)
+
+# ---- Title text ----
+title_line_1 <- "United States Median Rent"
+title_line_2 <- "Actual vs. Pre-Pandemic Trend: 2017-Present"
+
+# ---- Main chart (no title inside plot; we add a separate title row above) ----
+p_main <- ggplot(national_plot_df, aes(x = date, y = price_all, linetype = series)) +
+  geom_line(color = "#8434D6", linewidth = 1) +
+  scale_linetype_manual(values = c("Actual" = "solid", "Pre-pandemic trend" = "dashed")) +
+  scale_y_continuous(
+    limits = c(1000, 1500),
+    breaks = seq(1000, 1500, 100),
+    labels = label_dollar(accuracy = 1)
+  ) +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+  labs(x = NULL, y = NULL, linetype = NULL) +
+  theme_minimal(base_family = font_family, base_size = 16) +
+  theme(
+    # Gridlines: only labeled $100 intervals; no minor gridlines
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_line(),
+    panel.grid.major.x = element_blank(),
+
+    # X ticks (hash marks)
+    axis.ticks.x = element_line(),
+    axis.ticks.length.x = unit(3, "pt"),
+
+    # Legend in upper-left of plot area, 2 rows, clearer dash sample
+    legend.position = c(0.02, 0.93),
+    legend.justification = c(0, 1),
+    legend.direction = "vertical",
+    legend.box = "vertical",
+    legend.key.height = unit(14, "pt"),
+    legend.key.width  = unit(52, "pt"),  # longer sample so dash is obvious
+    legend.background = element_rect(fill = alpha("white", 0.7), color = NA),
+    legend.margin = margin(4, 6, 4, 6),
+
+    text = element_text(size = 16, family = font_family),
+    axis.title.y = element_blank(),
+
+    # Keep plot area tight; title is handled outside
+    plot.margin = margin(t = 0, r = 6, b = 0, l = 6)
+  ) +
+  guides(
+    linetype = guide_legend(
+      nrow = 2, byrow = TRUE,
+      override.aes = list(color = "#8434D6", linewidth = 1.2)
+    )
+  )
+
+# ---- Title grob row (prevents overlap) ----
+title_grob <- grobTree(
+  textGrob(
+    title_line_1,
+    x = unit(0.5, "npc"), y = unit(0.72, "npc"),
+    just = c("center", "center"),
+    gp = gpar(fontfamily = font_family, fontsize = 20)
+  ),
+  textGrob(
+    title_line_2,
+    x = unit(0.5, "npc"), y = unit(0.28, "npc"),
+    just = c("center", "center"),
+    gp = gpar(fontfamily = font_family, fontsize = 16)
+  )
+)
+
+# ---- Logo path (now local file in same folder as .Rmd) ----
+logo_path <- "Apartment_List_Logo_RGB crop.png"
+
+logo_path_norm <- tryCatch(
+  normalizePath(logo_path, winslash = "/", mustWork = FALSE),
+  error = function(e) logo_path
+)
+
+message("Working directory: ", getwd())
+message("Logo exists? ", file.exists(logo_path_norm))
+
+# ---- Pre-resize logo to EXACT 40px height (high-quality) ----
+logo_small_path <- sub("\\.(png|PNG)$", "_h40.png", logo_path_norm)
+
+if (file.exists(logo_path_norm)) {
+  magick::image_read(logo_path_norm) %>%
+    magick::image_resize(paste0("x", logo_h_px), filter = "Lanczos") %>%
+    magick::image_write(path = logo_small_path, format = "png")
+} else {
+  warning("Logo file not found; skipping logo. Path tried: ", logo_path_norm)
+}
+
+# ---- Create logo grob ----
+logo_grob <- NULL
+if (file.exists(logo_small_path)) {
+  logo_img <- png::readPNG(logo_small_path)
+  logo_grob <- rasterGrob(
+    logo_img,
+    x = unit(1, "npc"),
+    y = unit(0.5, "npc"),
+    just = c("right", "center"),
+    height = unit(logo_h_in, "in"),
+    interpolate = TRUE
+  )
+}
+
+# ---- Footer grob (source size 14) ----
+footer_grob <- grobTree(
+  textGrob(
+    "Source: Apartment List",
+    x = unit(0, "npc"),
+    y = unit(0.5, "npc"),
+    just = c("left", "center"),
+    gp = gpar(fontfamily = font_family, fontsize = 14)
+  ),
+  if (!is.null(logo_grob)) logo_grob else nullGrob()
+)
+
+# ---- Assemble INNER canvas: title row + plot row + footer row ----
+combined_inner <- arrangeGrob(
+  title_grob,
+  ggplotGrob(p_main),
+  footer_grob,
+  ncol = 1,
+  heights = unit.c(unit(title_h_pt, "pt"), unit(1, "null"), unit(footer_h_pt, "pt"))
+)
+
+# ---- Add OUTER padding by drawing inside an "inset" viewport ----
+# This guarantees visible padding in both RStudio and saved file.
+padded <- grobTree(
+  rectGrob(gp = gpar(col = NA, fill = "white")),  # background
+  combined_inner,
+  vp = viewport(
+    x = unit(0.5, "npc"), y = unit(0.5, "npc"),
+    width  = unit(1, "npc") - unit(2 * pad_pt, "pt"),
+    height = unit(1, "npc") - unit(2 * pad_pt, "pt")
+  )
+)
+
+# ---- Display in RStudio ----
+grid.newpage()
+grid.draw(padded)
+
+# ---- Save PNG ----
+out_file <- "national_actual_vs_prepan_trend.png"
+
+if (has_ragg) {
+  ragg::agg_png(out_file, width = out_w_px, height = out_h_px, units = "px", res = dpi)
+  grid.draw(padded)
+  dev.off()
+} else {
+  png(out_file, width = out_w_px, height = out_h_px, units = "px", res = dpi)
+  grid.draw(padded)
+  dev.off()
+}
+```
+
+
