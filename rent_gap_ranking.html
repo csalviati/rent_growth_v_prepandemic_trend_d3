@@ -8,15 +8,15 @@
   <style>
     .viz-root{
       color-scheme: light;
-      --surface-1:      #fcfcfb;
-      --page-plane:     #f9f9f7;
+      --surface-1:      #f5f2ed;
+      --page-plane:     #f5f2ed;
       --text-primary:   #0b0b0b;
       --text-secondary: #52514e;
       --text-muted:     #898781;
-      --gridline:       #e1e0d9;
-      --baseline:       #c3c2b7;
-      --pos:            #e34948; /* above trend (red pole) */
-      --neg:            #2a78d6; /* below trend (blue pole) */
+      --gridline:       #ded9cf;
+      --baseline:       #b8b2a5;
+      --pos:            #b2182b;
+      --neg:            #2166ac;
       --border:         rgba(11,11,11,0.10);
       --purple:         #8434D6;
     }
@@ -32,80 +32,41 @@
       width: 100%;
       max-width: 900px;
       margin: 0 auto;
-      padding: 16px 16px 12px 16px;
+      padding: 10px 14px 8px 14px;
       box-sizing: border-box;
       background: var(--surface-1);
     }
 
-    .title{ text-align:left; margin: 4px 0 0 0; }
-    .title .l1{ font-size:24px; font-weight:600; margin-bottom:2px; }
-    .title .l2{ font-size:18px; font-weight:400; color:var(--text-secondary); }
+    .title{ text-align:left; margin: 2px 0 0 0; }
+    .title .l1{ font-size:23px; font-weight:600; margin-bottom:2px; }
+    .title .l2{ font-size:17px; font-weight:400; color:var(--text-secondary); }
 
     .controls{
       display:flex;
       align-items:flex-end;
-      gap:20px;
-      flex-wrap:wrap;
-      margin: 16px 0 14px 0;
+      gap:14px;
+      flex-wrap:nowrap;
+      margin: 8px 0 8px 0;
     }
-    .control-group{ display:flex; flex-direction:column; gap:4px; }
-    .control-group label{
-      font-size:14px;
-      color:var(--text-secondary);
-      font-weight:600;
-    }
+    .control-group{ display:flex; flex-direction:column; gap:3px; flex: 1 1 0; min-width:0; }
+    .control-group label{ font-size:12px; color:var(--text-secondary); font-weight:600; }
     select{
-      font-size:16px;
-      padding:6px 10px;
+      font-size:13px;
+      padding:5px 7px;
       border:1px solid rgba(0,0,0,0.2);
       border-radius:8px;
       background:#fff;
       font-family: inherit;
       color: var(--text-primary);
-      min-width: 140px;
-    }
-    .segmented{
-      display:inline-flex;
-      border:1px solid rgba(0,0,0,0.2);
-      border-radius:8px;
-      overflow:hidden;
-    }
-    .segmented button{
-      font-family: inherit;
-      font-size:15px;
-      padding:6px 14px;
-      border:none;
-      background:#fff;
-      color: var(--text-secondary);
-      cursor:pointer;
-    }
-    .segmented button + button{ border-left:1px solid rgba(0,0,0,0.15); }
-    .segmented button.active{
-      background: var(--purple);
-      color:#fff;
-    }
-
-    .legend{
-      display:flex;
-      gap:18px;
-      align-items:center;
-      margin: 0 0 6px 0;
-      font-size:14px;
-      color: var(--text-secondary);
-    }
-    .legend .swatch{
-      display:inline-block;
-      width:12px; height:12px;
-      border-radius:3px;
-      margin-right:6px;
-      vertical-align:middle;
+      width:100%;
+      box-sizing:border-box;
     }
 
     /* Fixed-height, independently scrollable chart area */
     #chartScroll{
       position:relative;
       width:100%;
-      max-height: 620px;
+      max-height: 480px;
       overflow-y: auto;
       overflow-x: hidden;
       border: 1px solid var(--gridline);
@@ -113,24 +74,16 @@
     }
     #chart{ position:relative; width:100%; display:block; }
 
-    .row-label{
-      font-size:14px;
-      fill: var(--text-primary);
-    }
-    .value-label{
-      font-size:13px;
-      fill: var(--text-secondary);
-      font-variant-numeric: tabular-nums;
-    }
-    .axis text{
-      font-size:13px;
-      fill: var(--text-muted);
-    }
+    .row-label{ font-size:13px; fill: var(--text-primary); }
+    .value-label{ font-size:12px; fill: var(--text-secondary); font-variant-numeric: tabular-nums; }
+    .axis text{ font-size:12px; fill: var(--text-muted); }
     .axis path, .axis line{ stroke: var(--baseline); }
     .gridline{ stroke: var(--gridline); shape-rendering: crispEdges; }
 
     .bar-row-bg{ fill: transparent; }
     .bar-row-bg.hover{ fill: rgba(11,11,11,0.035); }
+
+    .legend-in-chart text{ font-size:12px; fill: var(--text-secondary); }
 
     .tooltip{
       position:absolute;
@@ -138,8 +91,8 @@
       background: rgba(255,255,255,0.96);
       border: 1px solid var(--border);
       border-radius: 8px;
-      padding: 8px 10px;
-      font-size: 14px;
+      padding: 7px 9px;
+      font-size: 13px;
       line-height: 1.3;
       box-shadow: 0 6px 18px rgba(0,0,0,0.15);
       opacity: 0;
@@ -151,11 +104,11 @@
       display:flex;
       align-items:center;
       justify-content:space-between;
-      margin-top:16px;
+      margin-top:8px;
       gap:12px;
     }
-    .source{ font-size:14px; color:var(--text-secondary); }
-    .logo{ height:36px; width:auto; display:block; }
+    .source{ font-size:13px; color:var(--text-secondary); }
+    .logo{ height:34px; width:auto; display:block; }
   </style>
 
   <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
@@ -178,25 +131,20 @@
         </select>
       </div>
       <div class="control-group">
-        <label>Compare to</label>
-        <div class="segmented" id="basisToggle">
-          <button data-basis="natl" class="active">National average trend</button>
-          <button data-basis="own">Market-specific trend</button>
-        </div>
+        <label for="basisSelect">Compare to</label>
+        <select id="basisSelect">
+          <option value="natl" selected>National average trend</option>
+          <option value="own">Market-specific trend</option>
+        </select>
       </div>
       <div class="control-group">
-        <label>Show</label>
-        <div class="segmented" id="showToggle">
-          <button data-n="25" class="active">25 largest</button>
-          <button data-n="50">50 largest</button>
-          <button data-n="100">100 largest</button>
-        </div>
+        <label for="showSelect">Show</label>
+        <select id="showSelect">
+          <option value="25" selected>25 largest</option>
+          <option value="50">50 largest</option>
+          <option value="100">100 largest</option>
+        </select>
       </div>
-    </div>
-
-    <div class="legend">
-      <span><span class="swatch" style="background:var(--pos)"></span>Actual above trend</span>
-      <span><span class="swatch" style="background:var(--neg)"></span>Actual below trend</span>
     </div>
 
     <div id="chartScroll">
@@ -215,6 +163,7 @@
   const num = (v) => (v === "" || v == null ? null : +v);
   const fmtMonthYear = d3.timeFormat("%B %Y");
   const fmtPct = d3.format("+.1%");
+  const fmtDollar0 = (v) => d3.format("$,.0f")(v);
   const TYPE_PLURAL = { Metro: "Metros", State: "States", City: "Cities" };
 
   const raw = await d3.csv(CSV_PATH, d => ({
@@ -230,7 +179,6 @@
 
   const latestDate = d3.max(raw, d => d.date);
   const latestLabel = fmtMonthYear(latestDate);
-
   const latestRows = raw.filter(d => d.date.getTime() === latestDate.getTime());
 
   const byLocation = latestRows
@@ -245,18 +193,21 @@
         location_type: d.location_type,
         location_name: d.location_name,
         population: d.population,
+        actual: d.price_all_actual,
+        trendOwn: d.price_all_prepan_trnd,
+        trendNatl: d.price_all_prepan_trnd_natl,
         diffOwn, diffNatl
       };
     });
 
   let currentType = "Metro";
-  let currentBasis = "natl"; // "natl" | "own"
+  let currentBasis = "natl";
   let currentShowN = 25;
 
   const container = d3.select("#chart");
   const tooltip = d3.select("#chartScroll").append("div").attr("class", "tooltip");
 
-  const margin = { top: 8, right: 70, bottom: 34, left: 230 };
+  const margin = { top: 6, right: 68, bottom: 30, left: 220 };
   const rowH = 22;
   const barThick = 16;
   const viewW = 860;
@@ -265,6 +216,7 @@
   const svg = container.append("svg")
     .attr("role", "img")
     .attr("aria-label", "Ranked bar chart of rent gap vs. pre-pandemic trend")
+    .attr("preserveAspectRatio", "none")
     .style("width", "100%")
     .style("display", "block");
 
@@ -274,6 +226,13 @@
   const gLabels = g.append("g").attr("class", "labels");
   const gAxis = g.append("g").attr("class", "axis");
   const baselineLine = g.append("line").attr("class", "axis");
+
+  // In-chart legend, pinned to the top-left corner of the plot area
+  const legend = g.append("g").attr("class", "legend-in-chart");
+  const legendBg = legend.append("rect").attr("rx", 6).attr("ry", 6).attr("fill", "rgba(255,255,255,0.8)");
+  const legendRow1 = legend.append("g");
+  const legendRow2 = legend.append("g");
+  [legendRow1, legendRow2].forEach(row => { row.append("rect"); row.append("text"); });
 
   const x = d3.scaleLinear();
 
@@ -298,24 +257,24 @@
 
   function render(){
     const basisKey = currentBasis === "natl" ? "diffNatl" : "diffOwn";
+    const trendKey = currentBasis === "natl" ? "trendNatl" : "trendOwn";
     let data = byLocation
       .filter(d => d.location_type === currentType && d[basisKey] != null)
-      .map(d => ({ ...d, value: d[basisKey] }));
+      .map(d => ({ ...d, value: d[basisKey], trendVal: d[trendKey] }));
 
-    // "Show N largest": cap to the N largest-by-population locations of this
-    // type (falls back to showing everything if population isn't available).
     const hasPopulation = data.some(d => d.population != null);
     if (hasPopulation){
       data = data.slice().sort((a, b) => (b.population ?? 0) - (a.population ?? 0)).slice(0, currentShowN);
     }
 
-    // Final display order: biggest-above-trend to biggest-below-trend
     data.sort((a, b) => b.value - a.value);
 
     const n = data.length;
     const innerH = Math.max(n, 1) * rowH;
     const contentH = innerH + margin.top + margin.bottom;
 
+    // preserveAspectRatio="none" lets width and height scale independently, so
+    // the SVG's pixel height always equals contentH exactly -- no letterboxing.
     svg.attr("viewBox", `0 0 ${viewW} ${contentH}`).attr("height", contentH);
 
     document.getElementById("titleL2").textContent =
@@ -344,7 +303,20 @@
       .attr("stroke", "var(--baseline)")
       .attr("stroke-width", 1);
 
-    const maxLabelChars = Math.max(8, Math.floor((margin.left - 16) / 7.2));
+    // Legend (top-left of plot area)
+    const legItems = [
+      { label: "Actual above trend", color: "var(--pos)" },
+      { label: "Actual below trend", color: "var(--neg)" }
+    ];
+    const legRows = [legendRow1, legendRow2];
+    legItems.forEach((item, i) => {
+      legRows[i].attr("transform", `translate(8, ${8 + i * 18})`);
+      legRows[i].select("rect").attr("width", 11).attr("height", 11).attr("rx", 2).attr("y", -9).attr("fill", item.color);
+      legRows[i].select("text").attr("x", 16).attr("y", 0).text(item.label);
+    });
+    legendBg.attr("x", 2).attr("y", 2).attr("width", 150).attr("height", 8 + legItems.length * 18 + 2);
+
+    const maxLabelChars = Math.max(8, Math.floor((margin.left - 16) / 6.6));
 
     const rowBg = gBars.selectAll("rect.bar-row-bg").data(data, d => d.location_id);
     rowBg.exit().remove();
@@ -354,11 +326,12 @@
       .attr("y", (d, i) => i * rowH).attr("height", rowH)
       .on("mouseenter", function(event, d){
         d3.select(this).classed("hover", true);
-        const pct = fmtPct(d.value);
+        const trendLabel = currentBasis === "natl" ? "National average trend" : "Market-specific trend";
         tooltip.html(
           `<div><b>${d.location_name}</b></div>` +
-          `<div>${d.location_type}</div>` +
-          `<div>Actual vs. ${currentBasis === "natl" ? "national average" : "market-specific"} trend: <b>${pct}</b></div>`
+          `<div>Actual: <b>${fmtDollar0(d.actual)}</b></div>` +
+          `<div>${trendLabel}: <b>${fmtDollar0(d.trendVal)}</b></div>` +
+          `<div>Difference: <b>${fmtPct(d.value)}</b></div>`
         );
         positionTooltip(event);
         tooltip.style("opacity", 1);
@@ -413,28 +386,9 @@
       .text(d => fmtPct(d.value));
   }
 
-  document.getElementById("typeSelect").addEventListener("change", (e) => {
-    currentType = e.target.value;
-    render();
-  });
-
-  document.querySelectorAll("#basisToggle button").forEach(btn => {
-    btn.addEventListener("click", () => {
-      document.querySelectorAll("#basisToggle button").forEach(b => b.classList.remove("active"));
-      btn.classList.add("active");
-      currentBasis = btn.dataset.basis;
-      render();
-    });
-  });
-
-  document.querySelectorAll("#showToggle button").forEach(btn => {
-    btn.addEventListener("click", () => {
-      document.querySelectorAll("#showToggle button").forEach(b => b.classList.remove("active"));
-      btn.classList.add("active");
-      currentShowN = +btn.dataset.n;
-      render();
-    });
-  });
+  document.getElementById("typeSelect").addEventListener("change", (e) => { currentType = e.target.value; render(); });
+  document.getElementById("basisSelect").addEventListener("change", (e) => { currentBasis = e.target.value; render(); });
+  document.getElementById("showSelect").addEventListener("change", (e) => { currentShowN = +e.target.value; render(); });
 
   render();
 })();

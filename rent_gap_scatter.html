@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Rent Gap Scatter (Metros)</title>
+<style>
+  body{ font-family: system-ui, sans-serif; margin: 20px; }
+  .dot{ fill: #8434D6; fill-opacity: 0.75; stroke: #fff; stroke-width: 1; }
+  .axis text{ font-size: 11px; }
+  .axis line, .axis path{ stroke: #999; }
+  .refline{ stroke: #ccc; stroke-dasharray: 4 3; }
+  .tooltip{
+    position:absolute; pointer-events:none; background:rgba(255,255,255,0.95);
+    border:1px solid #ccc; border-radius:6px; padding:6px 8px; font-size:12px;
+    opacity:0; white-space:nowrap;
+  }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+</head>
+<body>
+<h3>Metro Rent Gap, August 2026: National-trend gap (x) vs. Market-specific-trend gap (y)</h3>
+<div id="chart" style="position:relative;"></div>
+
+<script>
+(async function(){
+  const num = v => (v === "" || v == null ? null : +v);
+  const raw = await d3.csv("final_df.csv", d => ({
+    location_id: +d.location_id,
+    location_type: d.location_type,
+    location_name: d.location_name,
+    population: num(d.population),
+    date: new Date(+d.year, +d.month - 1, 1),
+    price_all_actual: num(d.price_all_actual),
+    price_all_prepan_trnd: num(d.price_all_prepan_trnd),
+    price_all_prepan_trnd_natl: num(d.price_all_prepan_trnd_natl)
+  }));
+
+  const latestDate = d3.max(raw, d => d.date);
+  const rows = raw.filter(d => d.date.getTime() === latestDate.getTime() && d.location_type === "Metro");
+
+  const data = rows.map(d => ({
+    name: d.location_name,
+    population: d.population,
+    gapNatl: d.price_all_actual / d.price_all_prepan_trnd_natl - 1,
+    gapOwn: d.price_all_actual / d.price_all_prepan_trnd - 1
+  })).filter(d => d.gapNatl != null && d.gapOwn != null && !isNaN(d.gapNatl) && !isNaN(d.gapOwn));
+
+  const width = 700, height = 600, margin = {top: 20, right: 20, bottom: 50, left: 60};
+  const innerW = width - margin.left - margin.right;
+  const innerH = height - margin.top - margin.bottom;
+
+  const container = d3.select("#chart");
+  const svg = container.append("svg").attr("width", width).attr("height", height);
+  const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+  const tooltip = container.append("div").attr("class", "tooltip");
+
+  // Both axes share one identical domain, spanning the true min/max across
+  // both metrics (with a little padding) so nothing gets clipped.
+  const sharedMin = Math.min(d3.min(data, d => d.gapNatl), d3.min(data, d => d.gapOwn));
+  const sharedMax = Math.max(d3.max(data, d => d.gapNatl), d3.max(data, d => d.gapOwn));
+  const pad = (sharedMax - sharedMin) * 0.05;
+
+  const x = d3.scaleLinear().domain([sharedMin - pad, sharedMax + pad]).range([0, innerW]);
+  const y = d3.scaleLinear().domain([sharedMin - pad, sharedMax + pad]).range([innerH, 0]);
+
+  const radius = d3.scaleSqrt()
+    .domain([0, d3.max(data, d => d.population || 0) || 1])
+    .range([3, 20]);
+
+  // Draw both axes crossing at the 0/0 origin (rather than at the plot edges),
+  // since the shared domain spans negative and positive values.
+  g.append("g").attr("class", "axis").attr("transform", `translate(0,${y(0)})`)
+    .call(d3.axisBottom(x).tickFormat(d3.format("+.0%")));
+  g.append("g").attr("class", "axis").attr("transform", `translate(${x(0)},0)`)
+    .call(d3.axisLeft(y).tickFormat(d3.format("+.0%")));
+
+  g.append("text").attr("x", innerW/2).attr("y", innerH+40).attr("text-anchor","middle")
+    .text("Gap vs. national average trend");
+  g.append("text").attr("transform","rotate(-90)").attr("x", -innerH/2).attr("y", -45)
+    .attr("text-anchor","middle").text("Gap vs. market-specific trend");
+
+  // x = y reference line, spanning the full shared domain
+  const [domLo, domHi] = x.domain();
+  g.append("line").attr("class","refline")
+    .attr("x1", x(domLo)).attr("y1", y(domLo)).attr("x2", x(domHi)).attr("y2", y(domHi));
+
+  g.selectAll("circle.dot").data(data).join("circle")
+    .attr("class","dot")
+    .attr("cx", d => x(d.gapNatl))
+    .attr("cy", d => y(d.gapOwn))
+    .attr("r", d => radius(d.population || 0))
+    .on("mouseenter", function(event,d){
+      tooltip.html(`<b>${d.name}</b><br>National-trend gap: ${d3.format("+.1%")(d.gapNatl)}<br>Market-trend gap: ${d3.format("+.1%")(d.gapOwn)}` +
+        (d.population ? `<br>Population: ${d3.format(",")(Math.round(d.population))}` : ""));
+      tooltip.style("opacity",1);
+    })
+    .on("mousemove", function(event){
+      const bbox = container.node().getBoundingClientRect();
+      tooltip.style("left", (event.clientX-bbox.left+12)+"px").style("top",(event.clientY-bbox.top+12)+"px");
+    })
+    .on("mouseleave", function(){ tooltip.style("opacity",0); });
+
+})();
+</script>
+</body>
+</html>

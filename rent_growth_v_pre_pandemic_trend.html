@@ -10,8 +10,7 @@
       --purple:#8434D6;
       --text:#111;
       --muted:#666;
-      --grid: rgba(0,0,0,0.12);
-      --bg:#fff;
+      --bg:#f5f2ed;
     }
 
     body{
@@ -25,34 +24,37 @@
       width: 100%;
       max-width: 900px;
       margin: 0 auto;
-      padding: 12px 12px 8px 12px;
+      padding: 10px 14px 8px 14px;
       box-sizing: border-box;
     }
 
     label{
-      font-size:18px;
+      font-size:17px;
       color:var(--muted);
     }
 
-    /* Searchable geography combobox */
     .controls{
       display:flex;
-      align-items:center;
+      align-items:flex-end;
       justify-content:flex-start;
-      gap:12px;
-      margin: 10px 0 12px 0;
+      gap:16px;
+      margin: 6px 0 8px 0;
       flex-wrap:wrap;
     }
+    .control-group{ display:flex; flex-direction:column; gap:3px; }
+    .control-group label{ font-size:13px; font-weight:600; }
+
+    /* Searchable geography combobox */
     .combo{
       position:relative;
-      width: 320px;
+      width: 300px;
       max-width: 100%;
     }
     .combo input{
       width:100%;
       box-sizing:border-box;
-      font-size:18px;
-      padding:6px 10px;
+      font-size:15px;
+      padding:5px 9px;
       border:1px solid rgba(0,0,0,0.2);
       border-radius:8px;
       background:#fff;
@@ -69,7 +71,7 @@
       top: calc(100% + 4px);
       left:0;
       right:0;
-      max-height: 280px;
+      max-height: 240px;
       overflow-y:auto;
       background:#fff;
       border:1px solid rgba(0,0,0,0.2);
@@ -78,83 +80,60 @@
       z-index: 30;
     }
     .combo-option{
-      padding:8px 10px;
-      font-size:16px;
+      padding:7px 9px;
+      font-size:14px;
       cursor:pointer;
       white-space:nowrap;
       overflow:hidden;
       text-overflow:ellipsis;
     }
-    .combo-option.active{
-      background: rgba(132,52,214,0.12);
-    }
-    .combo-empty{
-      padding:8px 10px;
+    .combo-option.active{ background: rgba(132,52,214,0.12); }
+    .combo-empty{ padding:7px 9px; font-size:14px; color:var(--muted); }
+
+    select{
       font-size:15px;
-      color:var(--muted);
+      padding:5px 9px;
+      border:1px solid rgba(0,0,0,0.2);
+      border-radius:8px;
+      background:#fff;
+      font-family: inherit;
+      color: var(--text);
+      min-width: 200px;
     }
 
-    /* Chart container */
-    #chart{
-      position: relative;
-      width: 100%;
-    }
+    #chart{ position:relative; width:100%; }
 
-    /* Tooltip */
     .tooltip{
       position:absolute;
       pointer-events:none;
-      background: rgba(255,255,255,0.92);
+      background: rgba(255,255,255,0.94);
       border: 1px solid rgba(0,0,0,0.15);
       border-radius: 8px;
-      padding: 8px 10px;
-      font-size: 16px;
+      padding: 7px 9px;
+      font-size: 13px;
       line-height: 1.25;
       box-shadow: 0 6px 18px rgba(0,0,0,0.12);
       opacity: 0;
       white-space: nowrap;
     }
 
-    .title{
-      text-align:left;
-      margin: 4px 0 0 0;
-    }
-    .title .l1{
-      font-size:24px;
-      font-weight:600;
-      margin-bottom:2px;
-    }
-    .title .l2{
-      font-size:20px;
-      font-weight:400;
-      color:var(--text);
-    }
+    .title{ text-align:left; margin: 2px 0 0 0; }
+    .title .l1{ font-size:23px; font-weight:600; margin-bottom:2px; }
+    .title .l2{ font-size:17px; font-weight:400; color:var(--text); }
 
-    /* Footer row: source note (left) + logo (right) */
     .footer{
       display:flex;
       align-items:center;
       justify-content:space-between;
-      margin-top:6px;
+      margin-top:4px;
       gap:12px;
     }
-    .source{
-      font-size:16px;
-      color:var(--text);
-    }
-    .logo{
-      height:40px;
-      width:auto;
-      display:block;
-    }
+    .source{ font-size:13px; color:var(--text); }
+    .logo{ height:34px; width:auto; display:block; }
 
-    /* Make SVG text crisp */
-    svg text{
-      font-family: inherit;
-    }
+    svg text{ font-family: inherit; }
   </style>
 
-  <!-- D3 -->
   <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
 </head>
 
@@ -168,10 +147,19 @@
     <div id="chart"></div>
 
     <div class="controls">
-      <label for="locSearch">Select geography</label>
-      <div class="combo" id="locCombo">
-        <input type="text" id="locSearch" autocomplete="off" placeholder="Type to search…" />
-        <div class="combo-list" id="locList"></div>
+      <div class="control-group">
+        <label for="locSearch">Select geography</label>
+        <div class="combo" id="locCombo">
+          <input type="text" id="locSearch" autocomplete="off" placeholder="Type to search…" />
+          <div class="combo-list" id="locList"></div>
+        </div>
+      </div>
+      <div class="control-group">
+        <label for="basisSelect">Compare to</label>
+        <select id="basisSelect">
+          <option value="natl" selected>National average trend</option>
+          <option value="own">Market-specific trend</option>
+        </select>
       </div>
     </div>
 
@@ -185,18 +173,12 @@
 (async function() {
   const PURPLE = "#8434D6";
   const CSV_PATH = "final_df.csv";
-  const AXIS_FONT_SIZE = 18; // matches legend font size
-
-  // Dash patterns: solid actual line, own-trend dash, national-average dash
-  const DASH_OWN = "9 5";
-  const DASH_NATL = "2 4";
-
-  // Location-type sort order for the dropdown
+  const AXIS_FONT_SIZE = 17;
+  const DASH_TREND = "9 5";
   const TYPE_ORDER = { National: 0, Metro: 1, State: 2, City: 3 };
 
-  // Chart sizing
-  const height = 600;
-  const margin = { top: 20, right: 16, bottom: 46, left: 64 };
+  const height = 560;
+  const margin = { top: 18, right: 16, bottom: 42, left: 62 };
   const innerH = height - margin.top - margin.bottom;
 
   const container = d3.select("#chart");
@@ -204,10 +186,9 @@
 
   const fmtMonth = d3.timeFormat("%b %Y");
   const fmtDollar0 = (v) => d3.format("$,.0f")(v);
+  const fmtPct = d3.format("+.1%");
   const num = (v) => (v === "" || v == null ? null : +v);
 
-  // NOTE: dates are constructed in LOCAL time (not UTC) so d3's local-time
-  // helpers (timeYears, timeYear.floor/ceil, timeFormat) label months correctly.
   const raw = await d3.csv(CSV_PATH, d => ({
     location_id: +d.location_id,
     location_type: d.location_type,
@@ -264,7 +245,7 @@
       opt.className = "combo-option" + (i === activeIndex ? " active" : "");
       opt.textContent = labelFor(loc);
       opt.addEventListener("mousedown", (e) => {
-        e.preventDefault(); // don't blur before click registers
+        e.preventDefault();
         selectLocation(loc);
       });
       comboList.appendChild(opt);
@@ -284,13 +265,27 @@
     update(loc.id);
   }
 
-  comboInput.addEventListener("input", () => {
+  // Opening the combobox (focus or click) always shows the FULL list, not one
+  // filtered by whatever is currently selected -- and selects all the input's
+  // text so the first keystroke replaces it instead of appending to it.
+  function openFullList(){
     activeIndex = -1;
-    filtered = filterLocations(comboInput.value);
+    filtered = locations;
     renderList(filtered);
-  });
+  }
 
   comboInput.addEventListener("focus", () => {
+    openFullList();
+    setTimeout(() => comboInput.select(), 0);
+  });
+
+  comboInput.addEventListener("click", () => {
+    if (comboList.style.display !== "block") openFullList();
+    comboInput.select();
+  });
+
+  comboInput.addEventListener("input", () => {
+    activeIndex = -1;
     filtered = filterLocations(comboInput.value);
     renderList(filtered);
   });
@@ -349,8 +344,7 @@
     const vals = [];
     data.forEach(d => {
       if (d.price_all_actual != null) vals.push(d.price_all_actual);
-      if (d.price_all_prepan_trnd != null) vals.push(d.price_all_prepan_trnd);
-      if (!isNational && d.price_all_prepan_trnd_natl != null) vals.push(d.price_all_prepan_trnd_natl);
+      if (d.trendVal != null) vals.push(d.trendVal);
     });
     if (vals.length === 0) return [0, 1];
     const [lo, hi] = d3.extent(vals);
@@ -364,27 +358,14 @@
     y.domain(computeYDomain(data, isNational)).nice();
 
     const yTicks = y.ticks(6);
-    const years = d3.timeYears(
-      d3.timeYear.floor(xDomain[0]),
-      d3.timeYear.ceil(xDomain[1])
-    );
+    const years = d3.timeYears(d3.timeYear.floor(xDomain[0]), d3.timeYear.ceil(xDomain[1]));
 
-    gx.call(d3.axisBottom(x)
-      .tickValues(years)
-      .tickFormat(d3.timeFormat("%Y"))
-      .tickSizeOuter(0)
-    );
-
+    gx.call(d3.axisBottom(x).tickValues(years).tickFormat(d3.timeFormat("%Y")).tickSizeOuter(0));
     gx.selectAll(".tick line").attr("y2", 6).attr("stroke", "#111");
     gx.selectAll(".domain").attr("stroke", "rgba(0,0,0,0.25)");
     gx.selectAll("text").attr("font-size", AXIS_FONT_SIZE);
 
-    gy.call(d3.axisLeft(y)
-      .tickValues(yTicks)
-      .tickFormat(fmtDollar0)
-      .tickSizeOuter(0)
-    );
-
+    gy.call(d3.axisLeft(y).tickValues(yTicks).tickFormat(fmtDollar0).tickSizeOuter(0));
     gy.selectAll(".domain").remove();
     gy.selectAll(".tick line").remove();
     gy.selectAll("text").attr("font-size", AXIS_FONT_SIZE);
@@ -398,73 +379,61 @@
       .attr("shape-rendering", "crispEdges");
   }
 
-  const lineActual = d3.line()
-    .defined(d => d.price_all_actual != null)
-    .x(d => x(d.date))
-    .y(d => y(d.price_all_actual));
-
-  const lineOwnTrend = d3.line()
-    .defined(d => d.price_all_prepan_trnd != null)
-    .x(d => x(d.date))
-    .y(d => y(d.price_all_prepan_trnd));
-
-  const lineNatlTrend = d3.line()
-    .defined(d => d.price_all_prepan_trnd_natl != null)
-    .x(d => x(d.date))
-    .y(d => y(d.price_all_prepan_trnd_natl));
+  const lineActual = d3.line().defined(d => d.price_all_actual != null).x(d => x(d.date)).y(d => y(d.price_all_actual));
+  const lineTrend = d3.line().defined(d => d.trendVal != null).x(d => x(d.date)).y(d => y(d.trendVal));
 
   const pathActual = g.append("path").attr("fill", "none").attr("stroke", PURPLE).attr("stroke-width", 2);
-  const pathOwnTrend = g.append("path").attr("fill", "none").attr("stroke", PURPLE).attr("stroke-width", 2).attr("stroke-dasharray", DASH_OWN);
-  const pathNatlTrend = g.append("path").attr("fill", "none").attr("stroke", PURPLE).attr("stroke-width", 2).attr("stroke-dasharray", DASH_NATL);
+  const pathTrend = g.append("path").attr("fill", "none").attr("stroke", PURPLE).attr("stroke-width", 2).attr("stroke-dasharray", DASH_TREND);
 
   const legend = g.append("g").attr("transform", `translate(${12},${10})`);
-  const legendBg = legend.append("rect").attr("rx", 8).attr("ry", 8).attr("fill", "rgba(255,255,255,0.75)").attr("stroke", "rgba(0,0,0,0.0)");
+  const legendBg = legend.append("rect").attr("rx", 8).attr("ry", 8).attr("fill", "rgba(255,255,255,0.75)");
   const legendRows = legend.append("g");
 
   function renderLegend(items){
-    const rowH = 28;
-    const padSide = 8;
+    const rowH = 26;
     const width = 230;
-    const legendHeight = 10 + items.length * rowH + 8 - (rowH - 18);
-
-    legendBg.attr("x", -padSide).attr("y", -10).attr("width", width).attr("height", legendHeight);
+    const legendHeight = 8 + items.length * rowH + 6;
+    legendBg.attr("x", -8).attr("y", -10).attr("width", width).attr("height", legendHeight);
 
     const rows = legendRows.selectAll("g.leg-row").data(items, d => d.label);
     rows.exit().remove();
     const rowsEnter = rows.enter().append("g").attr("class", "leg-row");
     rowsEnter.append("line");
     rowsEnter.append("text");
-
     const rowsMerged = rowsEnter.merge(rows);
     rowsMerged.attr("transform", (d, i) => `translate(0, ${4 + i * rowH})`);
-
     rowsMerged.select("line")
-      .attr("x1", 0).attr("x2", 54).attr("y1", 0).attr("y2", 0)
+      .attr("x1", 0).attr("x2", 50).attr("y1", 0).attr("y2", 0)
       .attr("stroke", PURPLE).attr("stroke-width", 3)
       .attr("stroke-dasharray", d => d.dash || null);
-
-    rowsMerged.select("text")
-      .attr("x", 62).attr("y", 5).attr("font-size", 18)
-      .text(d => d.label);
+    rowsMerged.select("text").attr("x", 58).attr("y", 5).attr("font-size", 17).text(d => d.label);
   }
 
   const hover = g.append("g").style("display", "none");
   hover.append("line").attr("class", "hover-line").attr("y1", 0).attr("y2", innerH).attr("stroke", "rgba(0,0,0,0.25)").attr("stroke-width", 1);
   const dotA = hover.append("circle").attr("r", 4).attr("fill", PURPLE);
-  const dotO = hover.append("circle").attr("r", 4).attr("fill", PURPLE);
-  const dotN = hover.append("circle").attr("r", 4).attr("fill", PURPLE);
+  const dotT = hover.append("circle").attr("r", 4).attr("fill", PURPLE);
 
   const overlay = g.append("rect").attr("fill", "transparent").attr("width", innerW).attr("height", innerH);
 
   let current = [];
   let isNational = true;
+  let currentBasis = "natl"; // "natl" | "own"
+
+  function trendLabelFor(meta){
+    if (meta.type === "National") return "Pre-pandemic trend";
+    return currentBasis === "natl" ? "Pre-pandemic trend (National average)" : `Pre-pandemic trend (${meta.type}-specific)`;
+  }
 
   function update(locationId){
     const id = +locationId;
     const meta = locMeta.get(id) || { type: "National", name: "United States" };
     isNational = meta.type === "National";
 
-    current = raw.filter(d => d.location_id === id).sort((a,b)=>a.date-b.date);
+    current = raw.filter(d => d.location_id === id).sort((a,b)=>a.date-b.date).map(d => ({
+      ...d,
+      trendVal: currentBasis === "natl" ? d.price_all_prepan_trnd_natl : d.price_all_prepan_trnd
+    }));
 
     titleEl.textContent = `Median Rent: ${meta.name}`;
 
@@ -472,23 +441,12 @@
     renderAxes(xDomain, current, isNational);
 
     pathActual.attr("d", lineActual(current));
-    pathOwnTrend.attr("d", lineOwnTrend(current));
+    pathTrend.attr("d", lineTrend(current));
 
-    if (isNational){
-      pathNatlTrend.attr("d", null);
-      dotN.style("display", "none");
-      renderLegend([
-        { label: "Actual", dash: null },
-        { label: "Pre-pandemic trend", dash: DASH_OWN }
-      ]);
-    } else {
-      pathNatlTrend.attr("d", lineNatlTrend(current));
-      renderLegend([
-        { label: "Actual", dash: null },
-        { label: `Pre-pandemic trend (${meta.type}-specific)`, dash: DASH_OWN },
-        { label: "Pre-pandemic trend (National average)", dash: DASH_NATL }
-      ]);
-    }
+    renderLegend([
+      { label: "Actual", dash: null },
+      { label: trendLabelFor(meta), dash: DASH_TREND }
+    ]);
 
     hover.style("display", "none");
     tooltip.style("opacity", 0);
@@ -504,28 +462,25 @@
     const a = current[i - 1];
     const b = current[i];
     if (!a || !b) return;
-
     const d = (date - a.date) > (b.date - date) ? b : a;
     const xPos = x(d.date);
 
     const ya = d.price_all_actual != null ? y(d.price_all_actual) : null;
-    const yo = d.price_all_prepan_trnd != null ? y(d.price_all_prepan_trnd) : null;
-    const yn = (!isNational && d.price_all_prepan_trnd_natl != null) ? y(d.price_all_prepan_trnd_natl) : null;
+    const yt = d.trendVal != null ? y(d.trendVal) : null;
 
     hover.style("display", null);
     hover.select(".hover-line").attr("x1", xPos).attr("x2", xPos);
-
     if (ya != null){ dotA.attr("cx", xPos).attr("cy", ya).style("display", null); } else { dotA.style("display", "none"); }
-    if (yo != null){ dotO.attr("cx", xPos).attr("cy", yo).style("display", null); } else { dotO.style("display", "none"); }
-    if (yn != null){ dotN.attr("cx", xPos).attr("cy", yn).style("display", null); } else { dotN.style("display", "none"); }
+    if (yt != null){ dotT.attr("cx", xPos).attr("cy", yt).style("display", null); } else { dotT.style("display", "none"); }
+
+    const meta = locMeta.get(d.location_id);
+    const pctDiff = (d.price_all_actual != null && d.trendVal) ? (d.price_all_actual / d.trendVal - 1) : null;
 
     const lines = [
       `<div><b>${fmtMonth(d.date)}</b></div>`,
       ya != null ? `<div>Actual: <b>${fmtDollar0(d.price_all_actual)}</b></div>` : "",
-      yo != null ? (isNational
-        ? `<div>Pre-pandemic trend: <b>${fmtDollar0(d.price_all_prepan_trnd)}</b></div>`
-        : `<div>${locMeta.get(d.location_id).type}-specific trend: <b>${fmtDollar0(d.price_all_prepan_trnd)}</b></div>`) : "",
-      yn != null ? `<div>National average trend: <b>${fmtDollar0(d.price_all_prepan_trnd_natl)}</b></div>` : ""
+      yt != null ? `<div>If trend continued: <b>${fmtDollar0(d.trendVal)}</b></div>` : "",
+      pctDiff != null ? `<div>Difference: <b>${fmtPct(pctDiff)}</b></div>` : ""
     ].filter(Boolean).join("");
 
     tooltip.html(lines);
@@ -535,7 +490,7 @@
     const ttRect = tooltip.node().getBoundingClientRect();
 
     const pointX = (svgBox.left - bbox.left) + margin.left + xPos;
-    const yCandidates = [ya, yo, yn].filter(v => v != null);
+    const yCandidates = [ya, yt].filter(v => v != null);
     const pointY = (svgBox.top - bbox.top) + margin.top + (yCandidates.length ? Math.min(...yCandidates) : innerH/2);
 
     const gap = 10;
@@ -552,7 +507,12 @@
     tooltip.style("opacity", 0);
   });
 
-  // Initial render
+  document.getElementById("basisSelect").addEventListener("change", (e) => {
+    currentBasis = e.target.value;
+    const currentId = current.length ? current[0].location_id : 0;
+    update(currentId);
+  });
+
   const initial = locations.find(l => l.id === 0) || locations[0];
   comboInput.value = labelFor(initial);
   update(initial.id);
