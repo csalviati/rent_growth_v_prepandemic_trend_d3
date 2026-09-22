@@ -154,6 +154,7 @@
   const fmtMonthYear = d3.timeFormat("%B %Y");
   const fmtPct = d3.format("+.1%");
   const fmtDollar0 = (v) => d3.format("$,.0f")(v);
+  const TYPE_PLURAL = { Metro: "Metros", State: "States", City: "Cities" };
 
   const STATE_COORDS = {
     "Alabama":[32.81,-86.79],"Alaska":[61.37,-152.40],"Arizona":[33.73,-111.43],"Arkansas":[34.97,-92.37],
@@ -464,7 +465,7 @@
       .filter(d => d.location_type === currentType && d[basisKey] != null && d.coord)
       .map(d => ({ ...d, value: d[basisKey] }));
 
-    document.getElementById("titleL1").textContent = `Median Rent vs. Pre-Pandemic Trend: ${currentType}s`;
+    document.getElementById("titleL1").textContent = `Median Rent vs. Pre-Pandemic Trend: ${TYPE_PLURAL[currentType] || currentType}`;
     document.getElementById("titleL2").textContent =
       `Percentage gap between actual and pre-pandemic trend, ${latestLabel}`;
 
