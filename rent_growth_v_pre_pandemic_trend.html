@@ -13,20 +13,34 @@
       --bg:#ffffff;
     }
 
-    body{
+    html, body{
+      height:100%;
       margin:0;
+    }
+
+    body{
       background:var(--bg);
       font-family: "Proxima Nova", system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
       color:var(--text);
     }
 
+    /* Fills the embedding iframe's actual height exactly -- title/controls/footer
+       size to their content, and the chart (flex:1 below) stretches to take up
+       whatever vertical space is left, so there's never leftover blank space at
+       the bottom regardless of small rendering differences across browsers. */
     .wrap{
       width: 100%;
       max-width: 900px;
+      height: 100%;
       margin: 0 auto;
       padding: 10px 14px 8px 14px;
       box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
     }
+    .title{ flex: 0 0 auto; }
+    .controls{ flex: 0 0 auto; }
+    .footer{ flex: 0 0 auto; }
 
     label{
       font-size:17px;
@@ -101,7 +115,8 @@
       min-width: 200px;
     }
 
-    #chart{ position:relative; width:100%; }
+    #chart{ position:relative; width:100%; flex:1 1 auto; min-height:0; }
+    #chart svg{ display:block; width:100%; height:100%; }
 
     .tooltip{
       position:absolute;
@@ -330,12 +345,15 @@
 
   const titleEl = document.getElementById("titleL1");
 
+  // preserveAspectRatio="none" + CSS width:100%/height:100% (set on #chart svg)
+  // let the chart stretch to fill exactly whatever vertical space the flex
+  // layout gives it, instead of a fixed aspect ratio that can leave (or run
+  // short of) blank space depending on the embedding iframe's real height.
   const svg = container.append("svg")
     .attr("role", "img")
     .attr("aria-label", "Rent trend chart")
     .attr("viewBox", `0 0 900 ${height}`)
-    .style("width", "100%")
-    .style("height", "auto");
+    .attr("preserveAspectRatio", "none");
 
   const viewW = 900;
   const innerW = viewW - margin.left - margin.right;
