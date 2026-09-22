@@ -8,8 +8,8 @@
   <style>
     .viz-root{
       color-scheme: light;
-      --surface-1:      #f5f2ed;
-      --page-plane:     #f5f2ed;
+      --surface-1:      #ffffff;
+      --page-plane:     #ffffff;
       --text-primary:   #0b0b0b;
       --text-secondary: #52514e;
       --text-muted:     #898781;
@@ -382,12 +382,12 @@
   const container = d3.select("#chart");
   const tooltip = container.append("div").attr("class", "tooltip");
 
-  const width = 900, height = 500;
+  const width = 900, height = 380;
   const svg = container.append("svg").attr("viewBox", `0 0 ${width} ${height}`);
   const gMap = svg.append("g");
   const gBubbles = svg.append("g");
 
-  const projection = d3.geoAlbersUsa().scale(940).translate([width / 2, height / 2]);
+  const projection = d3.geoAlbersUsa().scale(714).translate([width / 2, height / 2]);
   const path = d3.geoPath(projection);
 
   const us = await d3.json("https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json");

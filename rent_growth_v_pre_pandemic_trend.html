@@ -10,7 +10,7 @@
       --purple:#8434D6;
       --text:#111;
       --muted:#666;
-      --bg:#f5f2ed;
+      --bg:#ffffff;
     }
 
     body{
@@ -177,7 +177,7 @@
   const DASH_TREND = "9 5";
   const TYPE_ORDER = { National: 0, Metro: 1, State: 2, City: 3 };
 
-  const height = 560;
+  const height = 440;
   const margin = { top: 18, right: 16, bottom: 42, left: 62 };
   const innerH = height - margin.top - margin.bottom;
 
@@ -189,17 +189,26 @@
   const fmtPct = d3.format("+.1%");
   const num = (v) => (v === "" || v == null ? null : +v);
 
-  const raw = await d3.csv(CSV_PATH, d => ({
-    location_id: +d.location_id,
-    location_type: d.location_type,
-    location_name: d.location_name,
-    year: +d.year,
-    month: +d.month,
-    date: new Date(+d.year, (+d.month - 1), 1),
-    price_all_actual: num(d.price_all_actual),
-    price_all_prepan_trnd: num(d.price_all_prepan_trnd),
-    price_all_prepan_trnd_natl: num(d.price_all_prepan_trnd_natl)
-  }));
+  const raw = (await d3.csv(CSV_PATH, d => {
+    // Guard against stray/blank rows at the end of the CSV export (e.g. scratch
+    // values with no location_id/type/date) -- without this, an empty
+    // location_id string coerces to 0 via `+d.location_id` and gets folded
+    // into the National series, corrupting its line with bogus points.
+    if (!d.location_type || !d.location_name || d.year === "" || d.month === "" || d.location_id === "") {
+      return null;
+    }
+    return {
+      location_id: +d.location_id,
+      location_type: d.location_type,
+      location_name: d.location_name,
+      year: +d.year,
+      month: +d.month,
+      date: new Date(+d.year, (+d.month - 1), 1),
+      price_all_actual: num(d.price_all_actual),
+      price_all_prepan_trnd: num(d.price_all_prepan_trnd),
+      price_all_prepan_trnd_natl: num(d.price_all_prepan_trnd_natl)
+    };
+  })).filter(d => d != null && !isNaN(d.date));
 
   const locMeta = new Map();
   raw.forEach(d => {
@@ -386,7 +395,7 @@
   const pathTrend = g.append("path").attr("fill", "none").attr("stroke", PURPLE).attr("stroke-width", 2).attr("stroke-dasharray", DASH_TREND);
 
   const legend = g.append("g").attr("transform", `translate(${12},${10})`);
-  const legendBg = legend.append("rect").attr("rx", 8).attr("ry", 8).attr("fill", "rgba(255,255,255,0.75)");
+  const legendBg = legend.append("rect").attr("rx", 8).attr("ry", 8).attr("fill", "rgba(255,255,255,0.92)");
   const legendRows = legend.append("g");
 
   function renderLegend(items){
